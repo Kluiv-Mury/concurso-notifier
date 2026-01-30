@@ -11,3 +11,8 @@ __pycache__/
 
 .DS_Store
 Thumbs.db
+
+.env
+
+usuarios.json
+concursos.db
