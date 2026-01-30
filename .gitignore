@@ -1,0 +1,13 @@
+# venv
+notifier/
+
+__pycache__/
+*.py[cod]
+
+*.log
+
+.vscode/
+.idea/
+
+.DS_Store
+Thumbs.db
