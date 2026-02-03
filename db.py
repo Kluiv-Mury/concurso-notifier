@@ -1,5 +1,4 @@
 import sqlite3
-
 DB_FILE = "concursos.db"
 
 def criar_tabela_concurso():
@@ -10,10 +9,10 @@ def criar_tabela_concurso():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         titulo TEXT UNIQUE,
         link TEXT,
-        data TEXT,
+        inscricoes_ate TEXT,
         vagas TEXT,
-        cargos TEXT,
-        escolaridade TEXT,
+        salario_max TEXT,
+        nivel TEXT,
         estado TEXT
     )
     """)
@@ -49,6 +48,20 @@ def criar_tabela_user_ufs():
     conn.commit()
     conn.close()
 
+def criar_tabela_user_concursos_enviados():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_concursos_enviados (
+            user_id INTEGER,
+            concurso_id INTEGER,
+            PRIMARY KEY (user_id, concurso_id),
+            FOREIGN KEY (user_id) REFERENCES users (chat_id) ON DELETE CASCADE,
+            FOREIGN KEY (concurso_id) REFERENCES concursos (id) ON DELETE CASCADE
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 def adicionar_uf_usuario(user_id: int, uf: str):
     conn = sqlite3.connect(DB_FILE)
@@ -60,225 +73,162 @@ def adicionar_uf_usuario(user_id: int, uf: str):
     conn.commit()
     conn.close()
 
-def remover_uf_usuario(user_id: int, uf: str):
+def atualizar_uf_usuario(user_id: int, ufs: list[str]):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("""
-        DELETE FROM user_ufs
-        WHERE user_id = ? AND uf = ?
-    """, (user_id, uf.upper()))
+
+    cursor.execute("DELETE FROM user_ufs WHERE user_id = ?", (user_id,))
+
+    for uf in ufs:
+        cursor.execute(
+            "INSERT INTO user_ufs (user_id, uf) VALUES (?, ?)",
+            (user_id, uf.upper())  
+        )
+
     conn.commit()
     conn.close()
 
 def obter_ufs_usuario(user_id: int) -> list[str]:
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+
     cursor.execute("""
         SELECT uf FROM user_ufs WHERE user_id = ?
     """, (user_id,))
     rows = cursor.fetchall()
     conn.close()
-    return [r[0] for r in rows]
 
-
-
-
-def criar_tabela_user_concursos():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS user_concursos (
-        user_id INTEGER,
-        concurso_id INTEGER,
-        enviado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, concurso_id)
-    )
-    """)
-    conn.commit()
-    conn.close()
-
-
-def adicionar_usuario(chat_id: int, nome: str) -> bool:
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            INSERT INTO users (chat_id, nome)
-            VALUES (?, ?)
-        """, (chat_id, nome))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
-
-def listar_usuarios() -> list[int]:
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT chat_id FROM users")
-    rows = cursor.fetchall()
-    conn.close()
     return [row[0] for row in rows]
 
-
-def usuario_ja_recebeu(user_id: int, concurso_id: int) -> bool:
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 1 FROM user_concursos
-        WHERE user_id = ? AND concurso_id = ?
-    """, (user_id, concurso_id))
-    result = cursor.fetchone()
-    conn.close()
-    return result is not None
-
-def marcar_concurso_enviado(user_id: int, concurso_id: int):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR IGNORE INTO user_concursos (user_id, concurso_id)
-        VALUES (?, ?)
-    """, (user_id, concurso_id))
-    conn.commit()
-    conn.close()
-
-
+from datetime import datetime
 
 def adicionar_concurso(
     titulo: str,
     link: str,
-    data: str,
+    inscricoes_ate: str,
     vagas: str,
-    cargos: str,
-    escolaridade: str,
+    salario_max: str,
+    nivel: str,
     estado: str
-) -> bool:
+) -> int:
+    # Verificar se a data de inscrição é válida e se o concurso está aberto
+    try:
+        data_inscricao = datetime.strptime(inscricoes_ate, "%d/%m/%Y")  
+        if data_inscricao < datetime.now():  
+            return None  # Não insere concursos fechados
+    except ValueError:
+        return None  # Se o formato da data estiver incorreto, não insere o concurso
+
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     try:
         cursor.execute("""
             INSERT INTO concursos 
-            (titulo, link, data, vagas, cargos, escolaridade, estado)
+            (titulo, link, inscricoes_ate, vagas, salario_max, nivel, estado)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (titulo, link, data, vagas, cargos, escolaridade, estado))
+        """, (titulo, link, inscricoes_ate, vagas, salario_max, nivel, estado))
+
+        concurso_id = cursor.lastrowid
         conn.commit()
-        return True
+        return concurso_id
     except sqlite3.IntegrityError:
-        return False
+        cursor.execute("SELECT id FROM concursos WHERE titulo = ?", (titulo,))
+        row = cursor.fetchone()
+        return row[0] if row else None  
     finally:
         conn.close()
 
 
-def obter_id_concurso(titulo: str) -> int:
+
+
+def adicionar_concurso_enviado(user_id: int, concurso_id: int):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id FROM concursos WHERE titulo = ?",
-        (titulo,)
-    )
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else None
-
-# def obter_uf_prioridade(user_id: int) -> str:
-#     conn = sqlite3.connect(DB_FILE)
-#     cursor = conn.cursor()
-#     cursor.execute(
-#         "SELECT uf_prioridade FROM users WHERE chat_id = ?",
-#         (user_id,)
-#     )
-#     row = cursor.fetchone()
-#     return row[0] if row else "RJ"
-
-
-# def atualizar_uf_prioridade(user_id: int, uf: str):
-#     conn = sqlite3.connect(DB_FILE)
-#     cursor = conn.cursor()
-#     cursor.execute(
-#         "UPDATE usuarios SET uf_prioridade = ? WHERE chat_id = ?",
-#         (uf.upper(), user_id)
-#     )
-#     conn.commit()
-
-
-
-# def atualizar_uf_usuario(user_id: int, ufs: list[str]):
-#     conn = sqlite3.connect(DB_FILE)
-#     cursor = conn.cursor()
-
-#     uf_str = ",".join(sorted(set(ufs)))
-
-#     cursor.execute(
-#         "UPDATE users SET uf_prioridade = ? WHERE chat_id = ?",
-#         (uf_str, user_id)
-#     )
-
-#     conn.commit()
-#     conn.close()
-
-# def obter_ufs_usuario(user_id: int) -> list[str]:
-#     conn = sqlite3.connect(DB_FILE)
-#     cursor = conn.cursor()
-
-#     cursor.execute(
-#         "SELECT uf_prioridade FROM users WHERE chat_id = ?",
-#         (user_id,)
-#     )
-
-#     row = cursor.fetchone()
-#     conn.close()
-
-#     if not row or not row[0]:
-#         return ["RJ"]
-
-#     return [uf.strip().upper() for uf in row[0].split(",")]
-
-def atualizar_uf_usuario(user_id: int, ufs: list[str]):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    # Remove os UFs antigos
-    cursor.execute("DELETE FROM user_ufs WHERE user_id = ?", (user_id,))
-
-    # Insere os novos UFs
-    for uf in sorted(set(ufs)):
-        cursor.execute(
-            "INSERT INTO user_ufs (chat_id, uf) VALUES (?, ?)",
-            (user_id, uf.upper())
-        )
-
+    cursor.execute("""
+        INSERT OR IGNORE INTO user_concursos_enviados (user_id, concurso_id)
+        VALUES (?, ?)
+    """, (user_id, concurso_id))
     conn.commit()
     conn.close()
 
-def obter_ufs_usuario(user_id: int) -> list[str]:
+# Função para listar concursos
+def listar_concursos() -> list[dict]:
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT uf FROM user_ufs WHERE user_id = ?",
-        (user_id,)
-    )
-
+    cursor.execute("""
+        SELECT * FROM concursos
+    """)
     rows = cursor.fetchall()
     conn.close()
 
-    if not rows:
-        return ["RJ"]  # UF padrão caso não exista
+    return [{
+        "id": row[0],
+        "titulo": row[1],
+        "link": row[2],
+        "data": row[3],
+        "vagas": row[4],
+        "cargos": row[5],
+        "escolaridade": row[6],
+        "estado": row[7]
+    } for row in rows]
 
-    return [row[0].strip().upper() for row in rows]
+def concurso_ja_enviado(user_id: int, concurso_id: int) -> bool:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 1 FROM user_concursos_enviados
+        WHERE user_id = ? AND concurso_id = ?
+    """, (user_id, concurso_id))
+    resultado = cursor.fetchone()
+    conn.close()
+    return resultado is not None
 
-def atualizar_uf_usuario(user_id: int, ufs: list[str]):
+async def listar_usuarios():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    cursor.execute("DELETE FROM user_ufs WHERE user_id = ?", (user_id,))
-    for uf in ufs:
-        cursor.execute(
-            "INSERT INTO user_ufs (user_id, uf) VALUES (?, ?)",
-            (user_id, uf.upper())
-        )
+    cursor.execute("SELECT chat_id FROM users")
+    usuarios = cursor.fetchall()
+
+    conn.close()
+
+    
+    return [usuario[0] for usuario in usuarios]
+
+
+
+def adicionar_usuario(chat_id: int, nome: str):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR IGNORE INTO users (chat_id, nome)
+        VALUES (?, ?)
+    """, (chat_id, nome))
+    conn.commit()
+    conn.close()    
+
+
+def usuario_ja_registrado(chat_id: int) -> bool:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM users WHERE chat_id = ?", (chat_id,))
+    resultado = cursor.fetchone()
+    conn.close()
+    return resultado is not None
+
+
+def criar_indice_user_concursos_enviados():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Criando o índice na tabela user_concursos_enviados
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_user_concurso
+    ON user_concursos_enviados(user_id, concurso_id);
+    """)
 
     conn.commit()
     conn.close()
+
+
 

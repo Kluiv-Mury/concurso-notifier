@@ -1,97 +1,54 @@
-from bs4 import BeautifulSoup, Tag
 import requests
-from typing import List
-from db import obter_ufs_usuario, adicionar_concurso, usuario_ja_recebeu, obter_id_concurso, marcar_concurso_enviado
+from bs4 import BeautifulSoup
+from typing import List, Dict
+from datetime import datetime
 
-def concursos_rj() -> List[Tag]:
-    link = "https://www.pciconcursos.com.br/concursos/#RJ"
-
+def concursos_ache_conc(estado: str) -> List[Dict[str, str]]:
+    estado_formatado = estado.replace(" ", "-").strip().lower()
+    link = f"https://www.acheconcursos.com.br/concursos-{estado_formatado}"
     html = requests.get(link)
-    soup = BeautifulSoup(html.text, 'html.parser')
-    concursos = soup.select(".na, .ea, .da")
 
-    return [
-        c for c in concursos
-        if c.select_one(".cc").text.strip() == "RJ"
-    ]
-
-def concursos_por_uf(uf: str) -> List[Tag]:
-    link = "https://www.pciconcursos.com.br/concursos/"
-
-    html = requests.get(link, timeout=10)
-    soup = BeautifulSoup(html.text, "html.parser")
-
-    concursos = soup.select(".na, .ea, .da")
-
-    return [
-        c for c in concursos
-        if c.select_one(".cc") and c.select_one(".cc").text.strip().upper() == uf.upper()
-    ]
-
-
-
-def extrair_dados_concurso(c):
-    detalhes = c.select_one(".cd")
-
-    titulo = c.select_one(".ca a").get("title")
-    link = c.select_one(".ca a").get("href")
-    nome = titulo.split("-")[0].strip()
-
-    data = c.select_one(".ce").get_text(" | ", strip=True)
-
-    vagas = detalhes.contents[0].strip()
-    cargos = detalhes.select_one("span").contents[0].strip()
-    escolaridade = detalhes.select_one("span span").text.strip()
-
-    uf = c.select_one(".cc").text.strip()
-
-    mensagem = (
-        f"📌 {nome}\n"
-        f"📍 Estado: {uf}\n"
-        f"📅 Data limite: {data}\n"
-        f"💰 Remuneração: {vagas}\n"
-        f"🧑‍💼 Cargo: {cargos}\n"
-        f"🎓 Escolaridade: {escolaridade}\n\n"
-        f"🔗 Mais detalhes: {link}\n"
-    )
-
-    return {
-        "titulo": titulo,
-        "link": link,
-        "data": data,
-        "estado": uf,
-        "vagas": vagas,
-        "cargos": cargos,
-        "escolaridade": escolaridade,
-        "mensagem": mensagem
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
 
+    response = requests.get(link, headers=headers)
+    if response.status_code != 200:
+        print(f"Erro na requisição: {response.status_code} para {link}")
+        return []
 
+    soup = BeautifulSoup(html.text, "html.parser")
+    concursos = []
 
+    for row in soup.select("table.tbl-conc tr")[1:]:
+        cols = row.find_all("td")
+        if len(cols) < 4:
+            continue  
 
-def mensagens_novas_para_usuario(user_id: int) -> list[str]:
-    mensagens = []
-    ufs = obter_ufs_usuario(user_id)
+        link_tag = cols[0].find("a")
+        titulo_tag = cols[0].find("span", class_="titulo")
+        nivel_tag = cols[0].find("span", class_="vagas")
 
-    for uf in ufs:
-        for c in concursos_por_uf(uf):
-            dados = extrair_dados_concurso(c)
+        titulo = titulo_tag.get_text(strip=True) if titulo_tag else ""
+        link = link_tag["href"] if link_tag else ""
+        nivel = nivel_tag.get_text(strip=True).replace("Nível:", "").strip() if nivel_tag else None
+        inscricoes_ate = cols[1].get_text(strip=True)
+        vagas = cols[2].get_text(strip=True)
+        salario_max = cols[3].get_text(strip=True)
 
-            adicionar_concurso(
-                dados["titulo"],
-                dados["link"],
-                dados["data"],
-                dados["vagas"],
-                dados["cargos"],
-                dados["escolaridade"],
-                dados["estado"]
-            )
+        cargos = "Não informado"  
+        escolaridade = "Não especificado"  
 
-            concurso_id = obter_id_concurso(dados["titulo"])
+        concursos.append({
+            "titulo": titulo,
+            "link": link,
+            "nivel": nivel,
+            "inscricoes_ate": inscricoes_ate,
+            "vagas": vagas,
+            "salario_max": salario_max,
+            "cargos": cargos,
+            "escolaridade": escolaridade
+        })
 
-            if not usuario_ja_recebeu(user_id, concurso_id):
-                mensagens.append(dados["mensagem"])
-                marcar_concurso_enviado(user_id, concurso_id)
-
-    return mensagens
-
+    print(f"Concursos encontrados para {estado_formatado}: {len(concursos)} concursos.")
+    return concursos

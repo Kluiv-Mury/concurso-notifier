@@ -1,4 +1,4 @@
-# venv
+.env
 notifier/
 
 __pycache__/
@@ -6,13 +6,18 @@ __pycache__/
 
 *.log
 
+*.db
+*.sqlite
+*.sqlite3
+*.json
+
 .vscode/
 .idea/
 
 .DS_Store
-Thumbs.db
 
-.env
+*.py
+!bot.py
+!db.py
+!scrapping.py
 
-usuarios.json
-concursos.db

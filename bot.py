@@ -1,151 +1,229 @@
-from scrapping import mensagens_novas_para_usuario
-from telegram import Bot
-from db import criar_tabela_user_ufs, criar_tabela_users, criar_tabela_user_concursos, obter_ufs_usuario, atualizar_uf_usuario, adicionar_uf_usuario, adicionar_usuario, criar_tabela_concurso, listar_usuarios, adicionar_concurso, obter_id_concurso, usuario_ja_recebeu, marcar_concurso_enviado
+import os
+import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
 from dotenv import load_dotenv
-import os
-import json
-import os
+from db import (
+    adicionar_usuario, criar_indice_user_concursos_enviados,  usuario_ja_registrado, listar_usuarios, criar_tabela_user_concursos_enviados,
+    adicionar_concurso_enviado, concurso_ja_enviado, atualizar_uf_usuario, criar_tabela_user_ufs,
+    criar_tabela_concurso, criar_tabela_users, adicionar_uf_usuario, obter_ufs_usuario, adicionar_concurso,
+    listar_concursos
+)
+from scrapping import concursos_ache_conc
+import asyncio
 
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
-token = os.getenv("TELEGRAM_TOKEN")
-criar_tabela_concurso()
-criar_tabela_users()
-criar_tabela_user_concursos()
-criar_tabela_user_ufs()
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
+SIGLAS_ESTADOS = {
+    "rj": "rio-de-janeiro", "sp": "sao-paulo", "mg": "minas-gerais", "es": "espirito-santo",
+    "ba": "bahia", "pr": "parana", "sc": "santa-catarina", "rs": "rio-grande-do-sul", "df": "distrito-federal",
+    "go": "goias", "pe": "pernambuco", "ce": "ceara", "ma": "maranhao", "pi": "piaui", "pb": "paraiba",
+    "rn": "rio-grande-do-norte", "ms": "mato-grosso-do-sul", "mt": "mato-grosso", "al": "alagoas", "se": "sergipe",
+    "ac": "acre", "am": "amazonas", "ro": "rondonia", "rr": "roraima", "to": "tocantins", "ap": "amapa", "pa": "para"
+}
 
+def criar_tabelas():
+    criar_tabela_concurso()
+    criar_tabela_users()
+    criar_tabela_user_ufs()
+    criar_tabela_user_concursos_enviados()
+    criar_indice_user_concursos_enviados()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    nome = update.effective_user.first_name or ""
+    user_id = update.effective_chat.id
+    nome = update.effective_chat.first_name
 
-    # 1. adiciona usuário (ignora se já existir)
-    novo = adicionar_usuario(chat_id, nome)
+    if not usuario_ja_registrado(user_id):
+        adicionar_usuario(user_id, nome)
 
-    # 2. define UF padrão se for novo usuário
-    if novo:
-        adicionar_uf_usuario(chat_id, "RJ")
+    mensagem = f"Olá, {nome}! Sou seu assistente de concursos públicos.\n\n"
+    mensagem += "Estou aqui para te ajudar a encontrar as melhores oportunidades de concursos no Brasil.\n\n"
+    mensagem += "Use os comandos para registrar seus <b>estados de interesse</b> e receber informações sobre <b>concursos</b> nessas regiões.\n\n"
+    mensagem += "Para mais detalhes sobre como usar o bot, digite <b>/help</b>.\n"
 
-    await update.message.reply_text(
-        "🤖 *Bot de Concursos ativo!*\n\n"
-        "📌 Vou te avisar automaticamente quando surgirem *novos concursos* "
-        "nos estados que você definir.\n\n"
-        "🕐 A cada 1 hora faço uma verificação automática.\n"
-        "⚡ Você também pode forçar a busca usando `/concursos`.\n\n"
-        "🌎 Estado padrão: *RJ*\n"
-        "✏️ Use `/uf` para adicionar ou remover estados de interesse.\n\n"
-        "ℹ️ Digite `/help` para ver todos os comandos.",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(mensagem, parse_mode='HTML')
 
+    logger.info(f"Novo usuário {user_id} iniciou o bot.")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        """🤖 *Bot de Concursos Públicos*
-
-Eu acompanho concursos públicos e te aviso automaticamente quando surgirem *novos concursos* de acordo com os *estados (UFs)* que você definir.
-
-🕒 *Como funciona*
-• A cada 1 hora faço uma verificação automática  
-• Você recebe apenas concursos que *ainda não recebeu*  
-• Pode forçar a busca manualmente
-
-📍 *Comandos disponíveis*
-/concursos – Mostra concursos *novos* para você  
-/uf – Gerencia seus estados de interesse  
-/help – Mostra esta mensagem de ajuda  
-
-🌎 *Como funciona o /uf*
-Você pode definir *um ou vários estados* de interesse.
-
-Exemplos:
-• `/uf RJ` → define apenas RJ  
-• `/uf RJ SP MG` → define vários estados  
-• `/uf` → mostra seus estados atuais  
-
-📌 Por padrão, novos usuários começam com *RJ*.
-
-Mais funcionalidades estão a caminho 🚀
-""",
-        parse_mode="Markdown"
-    )
-
-
-
-async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
 
-    mensagens = mensagens_novas_para_usuario(user_id)
+    mensagem = "*Funcionamento do bot:*\n\n"
+    mensagem += "🔔 A cada meia hora, envio automaticamente atualizações sobre novos concursos nos estados que você escolheu.\n\n"
+    
+    mensagem += "*Comandos disponíveis:*\n\n"
+    
+    mensagem += "🔹 /uf\n"
+    mensagem += "Registre os estados de seu interesse. Exemplo: /uf RJ SP MG para acompanhar concursos de Rio de Janeiro, São Paulo e Minas Gerais.\n"
+    mensagem += "Usando o comando /uf sozinho, eu mostro os estados que você já está acompanhando.\n\n"
+    
+    mensagem += "🔹 /concursos\n"
+    mensagem += "Receba instantaneamente os detalhes de concursos abertos para os seus estados de interesse.\n\n"
 
-    if not mensagens:
-        await update.message.reply_text("Você já está em dia, nenhum concurso novo 🙂")
-        return
+    mensagem += "📝 Mais funcionalidades em breve!\n"
 
-    for m in mensagens:
-        await update.message.reply_text(m)
-
+    await update.message.reply_text(mensagem, parse_mode='HTML')
+    logger.info(f"Usuário {user_id} solicitou ajuda. Enviando informações.")
 
 async def uf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
 
-    # /uf sem argumentos → mostra UFs atuais
     if not context.args:
         ufs = obter_ufs_usuario(user_id)
-        await update.message.reply_text(
-            f"🌎 Seus estados de interesse:\n• " + ", ".join(ufs)
-        )
+        if not ufs:
+            await update.message.reply_text("❌ Você ainda não tem estados registrados. Use /uf para adicionar.")
+        else:
+            ufs_maiusculas = [uf.upper() for uf in ufs]
+            await update.message.reply_text(
+                f"🌎 Seus estados de interesse:\n• " + ", ".join(ufs_maiusculas)
+            )
         return
 
-    # /uf RJ SP MG
-    ufs = [uf.upper() for uf in context.args if len(uf) == 2]
+    ufs = [uf.lower() for uf in context.args]
 
+    ufs_validas = []
+    for uf in ufs:
+        if uf in SIGLAS_ESTADOS:
+            ufs_validas.append(SIGLAS_ESTADOS[uf])
+        else:
+            await update.message.reply_text(f"❌ Sigla inválida: {uf.upper()}.")
+            logger.warning(f"Usuário {user_id} tentou usar a sigla inválida: {uf}.")
+            return
+
+    atualizar_uf_usuario(user_id, ufs_validas)
+
+    ufs_maiusculas = [uf.upper() for uf in ufs]
+    await update.message.reply_text(f"🌍 Seus estados de interesse foram atualizados para:\n• " + ", ".join(ufs_maiusculas))
+    logger.info(f"Usuário {user_id} atualizou seus estados de interesse para: {', '.join(ufs_maiusculas)}")
+
+async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_chat.id
+
+    ufs = obter_ufs_usuario(user_id)
     if not ufs:
-        await update.message.reply_text(
-            "❌ Uso inválido.\nExemplo: `/uf RJ SP MG`",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Você não tem UFs registradas. Use /uf para registrar.")
         return
 
-    atualizar_uf_usuario(user_id, ufs)
+    for uf in ufs:
+        concursos = concursos_ache_conc(uf)
+        
+        if not concursos:
+            await update.message.reply_text(f"❌ Nenhum concurso encontrado para {uf}.")
+            continue
 
-    await update.message.reply_text(
-        "✅ Estados atualizados com sucesso!\n\n"
-        f"🌎 Agora você receberá concursos de:\n• {', '.join(ufs)}"
-    )
-
-
-
-async def enviar_novos(context: ContextTypes.DEFAULT_TYPE):
-    usuarios = listar_usuarios()
-
-    for user_id in usuarios:
-        mensagens = mensagens_novas_para_usuario(user_id)
-
-        for msg in mensagens:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=msg
+        for concurso in concursos:
+            concurso_id = adicionar_concurso(
+                concurso['titulo'],
+                concurso['link'],
+                concurso['inscricoes_ate'],
+                concurso['vagas'],
+                concurso['salario_max'],
+                concurso['nivel'],
+                uf
             )
 
+            if not concurso_id:
+                continue
 
+            if concurso_ja_enviado(user_id, concurso_id):
+                logger.info(f"Concurso {concurso['titulo']} já foi enviado para o usuário {user_id}.")
+                continue
+                
+            
 
-app = ApplicationBuilder().token(token).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("help", help_command))
-app.add_handler(CommandHandler("concursos", concursos))
-app.add_handler(CommandHandler("uf", uf))
-app.add_handler(CommandHandler("enviar_novos", enviar_novos))
+            adicionar_concurso_enviado(user_id, concurso_id)
 
+            mensagem = f"🔔 <b>{concurso['titulo']}</b>\n"
+            mensagem += f"💵 <b>Salário máximo:</b> {concurso['salario_max']}\n"
+            mensagem += f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"
+            mensagem += f"📅 <b>Inscrições até:</b> {concurso['inscricoes_ate']}\n"
+            mensagem += f"🎓 <b>Nível:</b> {concurso['nivel']}\n"
+            mensagem += f"\n🔗 {concurso['link']}"
 
-job_queue = app.job_queue
-app.job_queue.run_repeating(enviar_novos, interval=3600, first=10) 
+            await update.message.reply_text(mensagem, parse_mode='HTML')
 
+    await update.message.reply_text("📚 Todos os concursos foram atualizados!")
 
-print("Bot rodando...")
+async def buscar_e_enviar_concursos(application: Application):
+    usuarios = await listar_usuarios()
+    logger.info(f"Iniciando busca de concursos para {len(usuarios)} usuários.")
 
+    for user_id in usuarios:
+        ufs = obter_ufs_usuario(user_id)
+        if not ufs:
+            logger.info(f"Usuário {user_id} não tem UFs registradas.")
+            continue
 
+        logger.info(f"Buscando concursos para o usuário {user_id}, estados: {ufs}")
+        
+        for uf in ufs:
+            concursos = concursos_ache_conc(uf)
 
-app.run_polling()
+            if not concursos:
+                logger.info(f"Nenhum concurso encontrado para a UF {uf} para o usuário {user_id}.")
+                continue
+
+            for concurso in concursos:
+                concurso_id = adicionar_concurso(
+                    concurso['titulo'],
+                    concurso['link'],
+                    concurso['inscricoes_ate'],
+                    concurso['vagas'],
+                    concurso['salario_max'],
+                    concurso['nivel'],
+                    uf
+                )
+
+                if not concurso_id:
+                    logger.info(f"Concurso {concurso['titulo']} não foi inserido, data de inscrição inválida ou fechado.")
+                    continue
+
+                if concurso_ja_enviado(user_id, concurso_id):
+                    logger.info(f"Concurso {concurso['titulo']} já foi enviado para o usuário {user_id}.")
+                    continue
+
+                adicionar_concurso_enviado(user_id, concurso_id)
+
+                mensagem = f"🔔 <b>{concurso['titulo']}</b>\n"
+                mensagem += f"💵 <b>Salário máximo:</b> {concurso['salario_max']}\n"
+                mensagem += f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"
+                mensagem += f"📅 <b>Inscrições até:</b> {concurso['inscricoes_ate']}\n"
+                mensagem += f"🎓 <b>Nível:</b> {concurso['nivel']}\n"
+                mensagem += f"\n🔗 {concurso['link']}"
+
+                try:
+                    await application.bot.send_message(user_id, mensagem, parse_mode='HTML')
+                    logger.info(f"Mensagem enviada com sucesso para o usuário {user_id}")
+                except Exception as e:
+                    logger.error(f"Erro ao enviar mensagem para o usuário {user_id}: {e}")
+
+    logger.info("Busca de concursos finalizada.")
+
+def configurar_agendador(application: Application):
+    application.job_queue.run_repeating(
+        lambda context: asyncio.create_task(buscar_e_enviar_concursos(application)),
+        interval=1800,
+        first=0,
+    )
+
+def main():
+    criar_tabelas()
+
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    configurar_agendador(application)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help))
+    application.add_handler(CommandHandler("uf", uf))
+    application.add_handler(CommandHandler("concursos", concursos))
+
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
