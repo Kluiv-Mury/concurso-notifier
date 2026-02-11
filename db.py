@@ -230,5 +230,33 @@ def criar_indice_user_concursos_enviados():
     conn.commit()
     conn.close()
 
+def buscar_concursos_por_ufs(ufs):
+    placeholders = ",".join("?" for _ in ufs)
 
+    query = f"""
+        SELECT id, titulo, link, inscricoes_ate, vagas, salario_max, nivel
+        FROM concursos
+        WHERE estado IN ({placeholders})
+          AND date(substr(inscricoes_ate, 7, 4) || '-' ||
+                   substr(inscricoes_ate, 4, 2) || '-' ||
+                   substr(inscricoes_ate, 1, 2)) >= date('now')
+    """
 
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(query, ufs)
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            "id": r[0],
+            "titulo": r[1],
+            "link": r[2],
+            "inscricoes_ate": r[3],
+            "vagas": r[4],
+            "salario_max": r[5],
+            "nivel": r[6]
+        }
+        for r in rows
+    ]
