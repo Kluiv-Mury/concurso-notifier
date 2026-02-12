@@ -115,43 +115,28 @@ async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Você não tem UFs registradas. Use /uf para registrar.")
         return
 
-    for uf in ufs:
-        concursos = concursos_ache_conc(uf)
-        
-        if not concursos:
-            await update.message.reply_text(f"❌ Nenhum concurso encontrado para {uf}.")
+    concursos = buscar_concursos_por_ufs(ufs)
+    if not concursos:
+        await asyncio.gather(
+            *(update.message.reply_text(f"❌ Nenhum concurso encontrado para {uf}.") for uf in ufs)
+        )
+
+        return
+
+    for concurso in concursos:
+        if concurso_ja_enviado(user_id, concurso["id"]):
             continue
 
-        for concurso in concursos:
-            concurso_id = adicionar_concurso(
-                concurso['titulo'],
-                concurso['link'],
-                concurso['inscricoes_ate'],
-                concurso['vagas'],
-                concurso['salario_max'],
-                concurso['nivel'],
-                uf
-            )
+        adicionar_concurso_enviado(user_id, concurso["id"])
+        mensagem = f"🔔 <b>{concurso['titulo']}</b>\n"
+        mensagem += f"💵 <b>Salário máximo:</b> {concurso['salario_max']}\n"
+        mensagem += f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"
+        mensagem += f"📅 <b>Inscrições até:</b> {concurso['inscricoes_ate']}\n"
+        mensagem += f"🎓 <b>Nível:</b> {concurso['nivel']}\n"
+        mensagem += f"\n🔗 {concurso['link']}"
 
-            if not concurso_id:
-                continue
-
-            if concurso_ja_enviado(user_id, concurso_id):
-                logger.info(f"Concurso {concurso['titulo']} já foi enviado para o usuário {user_id}.")
-                continue
-                
-            
-
-            adicionar_concurso_enviado(user_id, concurso_id)
-
-            mensagem = f"🔔 <b>{concurso['titulo']}</b>\n"
-            mensagem += f"💵 <b>Salário máximo:</b> {concurso['salario_max']}\n"
-            mensagem += f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"
-            mensagem += f"📅 <b>Inscrições até:</b> {concurso['inscricoes_ate']}\n"
-            mensagem += f"🎓 <b>Nível:</b> {concurso['nivel']}\n"
-            mensagem += f"\n🔗 {concurso['link']}"
-
-            await update.message.reply_text(mensagem, parse_mode='HTML')
+        await update.message.reply_text(mensagem, parse_mode='HTML')
+        
 
     await update.message.reply_text("📚 Todos os concursos foram atualizados!")
 
@@ -213,6 +198,40 @@ async def buscar_e_enviar_concursos(application: Application):
     logger.info("Envio de concursos finalizado.")
 
 
+async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_chat.id
+
+    ufs = obter_ufs_usuario(user_id)
+    if not ufs:
+        await update.message.reply_text("❌ Você não tem UFs registradas. Use /uf para registrar.")
+        return
+
+    concursos = buscar_concursos_por_ufs(ufs)
+    if not concursos:
+        await update.message.reply_text("📭 Nenhum concurso ativo no momento para seus estados.")
+        return
+
+    await update.message.reply_text(
+        f"📚 <b>Concursos ativos para:</b> {', '.join(uf.upper() for uf in ufs)}\n"
+        f"Total encontrados: <b>{len(concursos)}</b>\n\n",
+        parse_mode="HTML"
+    )
+
+    for concurso in concursos:
+        mensagem = f"🔔 <b>{concurso['titulo']}</b>\n"
+        mensagem += f"💵 <b>Salário máximo:</b> {concurso['salario_max']}\n"
+        mensagem += f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"
+        mensagem += f"📅 <b>Inscrições até:</b> {concurso['inscricoes_ate']}\n"
+        mensagem += f"🎓 <b>Nível:</b> {concurso['nivel']}\n"
+        mensagem += f"\n🔗 {concurso['link']}"
+
+        await update.message.reply_text(mensagem, parse_mode='HTML')
+        await asyncio.sleep(0.15)  # proteção contra rate-limit
+
+    await update.message.reply_text("✅ Fim da lista.")
+
+
+
 def configurar_agendador(application: Application):
 
     application.job_queue.run_repeating(
@@ -237,6 +256,7 @@ def main():
     application.add_handler(CommandHandler("help", help))
     application.add_handler(CommandHandler("uf", uf))
     application.add_handler(CommandHandler("concursos", concursos))
+    application.add_handler(CommandHandler("todos", todos))
 
     application.run_polling()
 
