@@ -42,16 +42,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
+
     mensagem = (
         "<b>Guia de Comandos do Bot de Concursos</b>\n\n"
-        "<b>/help</b>\nMostra esta mensagem.\n\n"
-        "<b>/uf</b>\nDefina estados de interesse (ex: /uf RJ SP).\n\n"
-        "<b>/concursos</b>\nReceba concursos abertos não vistos.\n\n"
-        "<b>/todos</b>\nLista todos os concursos ativos.\n\n"
-        "<b>/config</b>\nAjuste filtros de salário e vagas.\n"
+
+        "<b>/help</b>\n"
+        "Mostra esta mensagem com os comandos disponíveis.\n\n"
+
+        "<b>/uf</b>\n"
+        "Defina ou veja os estados de interesse para receber concursos:\n"
+        "  • /uf RJ            → define Rio de Janeiro como estado de interesse.\n"
+        "  • /uf RJ SP MG      → define Rio de Janeiro, São Paulo e Minas Gerais.\n"
+        "  • /uf               → mostra os estados que você já está acompanhando.\n\n"
+
+        "<b>/concursos</b>\n"
+        "Receba imediatamente os concursos abertos para os seus estados de interesse que você ainda não recebeu.\n\n"
+
+        "<b>/todos</b>\n"
+        "Lista todos os concursos ativos nos seus estados de interesse, incluindo detalhes como salário, vagas, nível e prazo de inscrição.\n\n"
+
+        "<b>/config</b>\n"
+        "Ajuste filtros de concursos por salário mínimo, nível e número mínimo de vagas.\n\n"
+
+        "<b>Além disso, a cada 1 hora, atualizarei a base de concursos e enviarei os que você ainda não recebeu, respeitando suas regiões de interesse.</b>"
     )
+
     await update.message.reply_text(mensagem, parse_mode="HTML")
-    logger.info(f"Usuário {user_id} solicitou ajuda.")
+    logger.info(f"Usuário {user_id} solicitou ajuda. Enviando informações.")
 
 async def uf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
