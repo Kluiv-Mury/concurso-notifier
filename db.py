@@ -12,7 +12,7 @@ def criar_tabela_concurso():
         inscricoes_ate TEXT,
         vagas TEXT,
         salario_max TEXT,
-        nivel TEXT,
+        nivel TEXT, 
         estado TEXT
     )
     """)
@@ -289,8 +289,8 @@ def buscar_concursos_filtrados(ufs, salario=None, nivel=None, vagas=None):
     params = list(ufs)
 
     if salario is not None:
-        query += " AND CAST(REPLACE(REPLACE(salario_max, 'R$', ''), ',', '') AS DECIMAL) >= ?"
-        params.append(salario)
+        query += " AND CAST(REPLACE(REPLACE(REPLACE(salario_max, 'R$', ''), '.', ''), ',', '.') AS DECIMAL) >= ?"
+        params.append(salario) 
 
     if nivel is not None:
         query += " AND LOWER(nivel) LIKE LOWER(?)"
@@ -307,6 +307,7 @@ def buscar_concursos_filtrados(ufs, salario=None, nivel=None, vagas=None):
 
     try:
         cursor.execute(query, params)
+        print(f'query de salario: {query}')
         rows = cursor.fetchall()
         
         print(f"Resultados encontrados: {rows}")
@@ -338,11 +339,33 @@ def atualizar_filtros(user_id, salario=None, nivel=None, vagas=None):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE users 
-        SET salario_min = ?, nivel = ?, vagas_min = ?
-        WHERE chat_id = ?
-    """, (salario or None, nivel or None, vagas or None, user_id))  
+    if salario is None and nivel is None and vagas is None:
+        cursor.execute("""
+            UPDATE users 
+            SET salario_min = NULL, nivel = NULL, vagas_min = NULL
+            WHERE chat_id = ?
+        """, (user_id,))
+    else:
+        if salario is not None:
+            cursor.execute("""
+                UPDATE users 
+                SET salario_min = ? 
+                WHERE chat_id = ?
+            """, (salario, user_id))
+
+        if nivel is not None:
+            cursor.execute("""
+                UPDATE users 
+                SET nivel = ? 
+                WHERE chat_id = ?
+            """, (nivel, user_id))
+
+        if vagas is not None:
+            cursor.execute("""
+                UPDATE users 
+                SET vagas_min = ? 
+                WHERE chat_id = ?
+            """, (vagas, user_id))
 
     conn.commit()
     conn.close()
