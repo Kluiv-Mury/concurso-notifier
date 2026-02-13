@@ -82,7 +82,7 @@ def atualizar_uf_usuario(user_id: int, ufs: list[str]):
     for uf in ufs:
         cursor.execute(
             "INSERT INTO user_ufs (user_id, uf) VALUES (?, ?)",
-            (user_id, uf.upper())  
+            (user_id, uf)  
         )
 
     conn.commit()
@@ -111,13 +111,13 @@ def adicionar_concurso(
     nivel: str,
     estado: str
 ) -> int:
-    # Verificar se a data de inscrição é válida e se o concurso está aberto
+
     try:
         data_inscricao = datetime.strptime(inscricoes_ate, "%d/%m/%Y")  
         if data_inscricao < datetime.now():  
-            return None  # Não insere concursos fechados
+            return None  
     except ValueError:
-        return None  # Se o formato da data estiver incorreto, não insere o concurso
+        return None 
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -151,7 +151,6 @@ def adicionar_concurso_enviado(user_id: int, concurso_id: int):
     conn.commit()
     conn.close()
 
-# Função para listar concursos
 def listar_concursos() -> list[dict]:
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -221,7 +220,6 @@ def criar_indice_user_concursos_enviados():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    # Criando o índice na tabela user_concursos_enviados
     cursor.execute("""
     CREATE INDEX IF NOT EXISTS idx_user_concurso
     ON user_concursos_enviados(user_id, concurso_id);
@@ -260,3 +258,104 @@ def buscar_concursos_por_ufs(ufs):
         }
         for r in rows
     ]
+
+
+def buscar_concursos_filtrados(ufs, salario=None, nivel=None, vagas=None):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    if salario is not None and not isinstance(salario, int):
+        print("Erro: 'salario' deve ser um número inteiro ou None.")
+        return []
+
+    if nivel is not None and not isinstance(nivel, str):
+        print("Erro: 'nivel' deve ser uma string ou None.")
+        return []
+
+    if vagas is not None and not isinstance(vagas, int):
+        print("Erro: 'vagas' deve ser um número inteiro ou None.")
+        return []
+
+    if not ufs:
+        print("Nenhum estado registrado. Retornando lista vazia.")
+        return []   
+
+    query = """
+        SELECT id, titulo, link, inscricoes_ate, vagas, salario_max, nivel, estado
+        FROM concursos
+        WHERE estado IN ({})
+    """.format(",".join("?" * len(ufs)))  
+
+    params = list(ufs)
+
+    if salario is not None:
+        query += " AND CAST(REPLACE(REPLACE(salario_max, 'R$', ''), ',', '') AS DECIMAL) >= ?"
+        params.append(salario)
+
+    if nivel is not None:
+        query += " AND LOWER(nivel) LIKE LOWER(?)"
+        params.append(f"%{nivel}%")  
+
+    if vagas is not None:
+        query += " AND vagas >= ?"
+        params.append(vagas)
+
+    query += " ORDER BY CAST(salario_max AS INTEGER) DESC"
+
+    print(f"Executando query: {query}")
+    print(f"Parâmetros: {params}")
+
+    try:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        print(f"Resultados encontrados: {rows}")
+    except sqlite3.Error as e:
+        print(f"Erro ao executar a query: {e}")
+        return []  
+
+    conn.close()
+
+    if not rows:
+        print("Nenhum concurso encontrado com os filtros aplicados.")
+
+    return [
+        {
+            "id": r[0],
+            "titulo": r[1],
+            "link": r[2],
+            "inscricoes_ate": r[3],
+            "vagas": r[4],
+            "salario_max": r[5],
+            "nivel": r[6],
+            "estado": r[7],
+        }
+        for r in rows
+    ]
+
+
+def atualizar_filtros(user_id, salario=None, nivel=None, vagas=None):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE users 
+        SET salario_min = ?, nivel = ?, vagas_min = ?
+        WHERE chat_id = ?
+    """, (salario or None, nivel or None, vagas or None, user_id))  
+
+    conn.commit()
+    conn.close()
+
+
+def obter_filtros(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT salario_min, nivel, vagas_min
+        FROM users
+        WHERE chat_id = ?
+    """, (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row if row else (None, None, None)  

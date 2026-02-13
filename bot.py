@@ -7,8 +7,10 @@ from db import (
     adicionar_usuario, criar_indice_user_concursos_enviados,  usuario_ja_registrado, listar_usuarios, criar_tabela_user_concursos_enviados,
     adicionar_concurso_enviado, concurso_ja_enviado, atualizar_uf_usuario, criar_tabela_user_ufs,
     criar_tabela_concurso, criar_tabela_users, adicionar_uf_usuario, obter_ufs_usuario, adicionar_concurso,
-    buscar_concursos_por_ufs
+    buscar_concursos_por_ufs, buscar_concursos_filtrados
 )
+
+from telegram.ext import CallbackQueryHandler
 from scrapping import concursos_ache_conc
 import asyncio
 
@@ -58,23 +60,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
 
-    mensagem = "*Funcionamento do bot:*\n\n"
-    mensagem += "🔔 A cada meia hora, envio automaticamente atualizações sobre novos concursos nos estados que você escolheu.\n\n"
-    
-    mensagem += "*Comandos disponíveis:*\n\n"
-    
-    mensagem += "🔹 /uf\n"
-    mensagem += "Registre os estados de seu interesse. Exemplo: /uf RJ SP MG para acompanhar concursos de Rio de Janeiro, São Paulo e Minas Gerais.\n"
-    mensagem += "Usando o comando /uf sozinho, eu mostro os estados que você já está acompanhando.\n\n"
-    
-    mensagem += "🔹 /concursos\n"
-    mensagem += "Receba instantaneamente os detalhes de concursos abertos para os seus estados de interesse.\n\n"
+    mensagem = (
+        "<b>Guia de Comandos do Bot de Concursos</b>\n\n"
 
-    mensagem += "📝 Mais funcionalidades em breve!\n"
+        "<b>/help</b>\n"
+        "Mostra esta mensagem com os comandos disponíveis.\n\n"
 
-    await update.message.reply_text(mensagem, parse_mode='HTML')
+        "<b>/uf</b>\n"
+        "Defina ou veja os estados de interesse para receber concursos:\n"
+        "  • /uf RJ           → define Rio de Janeiro como estado de interesse.\n"
+        "  • /uf RJ SP MG     → define Rio de Janeiro, São Paulo e Minas Gerais.\n"
+        "  • /uf              → mostra os estados que você já está acompanhando.\n\n"
+
+        "<b>/concursos</b>\n"
+        "Receba imediatamente os concursos abertos para os seus estados de interesse que você ainda não recebeu.\n\n"
+
+        "<b>/todos</b>\n"
+        "Lista todos os concursos ativos nos seus estados de interesse, incluindo detalhes como salário, vagas, nível e prazo de inscrição.\n\n"
+
+        "<b>/config</b>\n"
+        "Ajuste filtros de concursos por salário mínimo, nível e número mínimo de vagas.\n\n"
+
+        "<b>Observações importantes:</b>\n"
+        "  1. O bot envia atualizações automáticas de concursos periodicamente para os estados que você definiu.\n"
+        "  2. Use /uf para atualizar seus estados a qualquer momento.\n"
+        "  3. Use /config para ajustar filtros e receber apenas concursos que atendam aos seus critérios.\n"
+    )
+
+    await update.message.reply_text(mensagem, parse_mode="HTML")
     logger.info(f"Usuário {user_id} solicitou ajuda. Enviando informações.")
-
 async def uf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
 
@@ -115,7 +129,9 @@ async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Você não tem UFs registradas. Use /uf para registrar.")
         return
 
-    concursos = buscar_concursos_por_ufs(ufs)
+    salario, nivel, vagas = obter_filtros(user_id)
+    concursos = buscar_concursos_filtrados(ufs, salario, nivel, vagas)
+
     if not concursos:
         await asyncio.gather(
             *(update.message.reply_text(f"❌ Nenhum concurso encontrado para {uf}.") for uf in ufs)
@@ -175,8 +191,8 @@ async def buscar_e_enviar_concursos(application: Application):
         if not ufs:
             continue
 
-        concursos = buscar_concursos_por_ufs(ufs)
-
+        salario, nivel, vagas = obter_filtros(user_id)
+        concursos = buscar_concursos_filtrados(ufs, salario, nivel, vagas)
         for concurso in concursos:
             if concurso_ja_enviado(user_id, concurso['id']):
                 continue
@@ -206,7 +222,9 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Você não tem UFs registradas. Use /uf para registrar.")
         return
 
-    concursos = buscar_concursos_por_ufs(ufs)
+    salario, nivel, vagas = obter_filtros(user_id)
+    concursos = buscar_concursos_filtrados(ufs, salario, nivel, vagas)
+
     if not concursos:
         await update.message.reply_text("📭 Nenhum concurso ativo no momento para seus estados.")
         return
@@ -217,6 +235,9 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
+    await asyncio.sleep(1)
+
+
     for concurso in concursos:
         mensagem = f"🔔 <b>{concurso['titulo']}</b>\n"
         mensagem += f"💵 <b>Salário máximo:</b> {concurso['salario_max']}\n"
@@ -225,12 +246,193 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mensagem += f"🎓 <b>Nível:</b> {concurso['nivel']}\n"
         mensagem += f"\n🔗 {concurso['link']}"
 
-        await update.message.reply_text(mensagem, parse_mode='HTML')
-        await asyncio.sleep(0.15)  # proteção contra rate-limit
+        await update.message.reply_text(mensagem, parse_mode="HTML")
+        await asyncio.sleep(0.15)  
 
     await update.message.reply_text("✅ Fim da lista.")
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CommandHandler, CallbackQueryHandler
+from db import obter_filtros, atualizar_filtros
 
+
+async def config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message:
+        msg = update.message
+        user_id = update.effective_chat.id
+    else:
+        query = update.callback_query
+        msg = query.message
+        user_id = query.from_user.id
+
+    salario, nivel, vagas = obter_filtros(user_id)
+
+    texto = (
+        "⚙️ <b>Configurações de filtros</b>\n\n"
+        f"💵 Salário mínimo: <b>{salario or '—'}</b>\n"
+        f"🎓 Nível: <b>{nivel or '—'}</b>\n"
+        f"🏢 Vagas mínimas: <b>{vagas or '—'}</b>\n"
+    )
+
+    teclado = [
+        [
+            InlineKeyboardButton("💵 Salário", callback_data="cfg_salario"),
+            InlineKeyboardButton("🎓 Nível", callback_data="cfg_nivel"),
+        ],
+        [
+            InlineKeyboardButton("🏢 Vagas", callback_data="cfg_vagas"),
+            InlineKeyboardButton("♻️ Reset", callback_data="cfg_reset"),
+        ]
+    ]
+
+    await msg.reply_text(
+        texto,
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="HTML"
+    )
+
+
+
+async def menu_salario(query):
+    teclado = [
+        [
+            InlineKeyboardButton("3k+", callback_data="sal_3000"),
+            InlineKeyboardButton("5k+", callback_data="sal_5000"),
+        ],
+        [
+            InlineKeyboardButton("8k+", callback_data="sal_8000"),
+            InlineKeyboardButton("10k+", callback_data="sal_10000"),
+        ],
+        [
+            InlineKeyboardButton("12k+", callback_data="sal_12000"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")
+        ]
+    ]
+
+    await query.edit_message_text(
+        "💵 <b>Escolha o salário mínimo:</b>",
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="HTML"
+    )
+
+
+async def menu_nivel(query):
+    teclado = [
+        [
+            InlineKeyboardButton("Médio", callback_data="niv_medio"),
+            InlineKeyboardButton("Técnico", callback_data="niv_tecnico"),
+        ],
+        [
+            InlineKeyboardButton("Superior", callback_data="niv_superior"),
+            InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")
+        ]
+    ]
+
+    await query.edit_message_text(
+        "🎓 <b>Escolha o nível desejado:</b>",
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="HTML"
+    )
+
+
+async def menu_vagas(query):
+    teclado = [
+        [
+            InlineKeyboardButton("5+", callback_data="vag_5"),
+            InlineKeyboardButton("10+", callback_data="vag_10"),
+        ],
+        [
+            InlineKeyboardButton("20+", callback_data="vag_20"),
+            InlineKeyboardButton("50+", callback_data="vag_50"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")
+        ]
+    ]
+
+    await query.edit_message_text(
+        "🏢 <b>Escolha o mínimo de vagas:</b>",
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="HTML"
+    )
+
+
+async def callback_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    data = query.data
+
+    nivel_mapeado = {
+        "medio": "Médio",  
+        "tecnico": "Técnico",
+        "superior": "Superior"
+    }
+
+    if data == "cfg_menu":
+        salario, nivel, vagas = obter_filtros(user_id)
+
+        texto = (
+            "⚙️ <b>Configurações de filtros</b>\n\n"
+            f"💵 Salário mínimo: <b>{salario or '—'}</b>\n"
+            f"🎓 Nível: <b>{nivel or '—'}</b>\n"
+            f"🏢 Vagas mínimas: <b>{vagas or '—'}</b>\n"
+        )
+
+        teclado = [
+            [
+                InlineKeyboardButton("💵 Salário", callback_data="cfg_salario"),
+                InlineKeyboardButton("🎓 Nível", callback_data="cfg_nivel"),
+            ],
+            [
+                InlineKeyboardButton("🏢 Vagas", callback_data="cfg_vagas"),
+                InlineKeyboardButton("♻️ Reset", callback_data="cfg_reset"),
+            ]
+        ]
+
+        await query.edit_message_text(
+            texto,
+            reply_markup=InlineKeyboardMarkup(teclado),
+            parse_mode="HTML"
+        )
+        return
+
+    if data == "cfg_salario":
+        await menu_salario(query)
+        return
+
+    if data == "cfg_nivel":
+        await menu_nivel(query)
+        return
+
+    if data == "cfg_vagas":
+        await menu_vagas(query)
+        return
+
+    if data == "cfg_reset":
+        atualizar_filtros(user_id, None, None, None)
+        await config(update, context)
+        return
+
+    if data.startswith("niv_"):
+        nivel_correct = nivel_mapeado.get(data.split("_")[1], None)
+        if nivel_correct:
+            atualizar_filtros(user_id, nivel=nivel_correct) 
+        await config(update, context)
+        return
+
+    if data.startswith("sal_"):
+        atualizar_filtros(user_id, salario=int(data.split("_")[1]))
+        await config(update, context)
+        return
+
+    if data.startswith("vag_"):
+        atualizar_filtros(user_id, vagas=int(data.split("_")[1]))
+        await config(update, context)
+        return
 
 def configurar_agendador(application: Application):
 
@@ -257,6 +459,9 @@ def main():
     application.add_handler(CommandHandler("uf", uf))
     application.add_handler(CommandHandler("concursos", concursos))
     application.add_handler(CommandHandler("todos", todos))
+    application.add_handler(CommandHandler("config", config))
+    application.add_handler(CallbackQueryHandler(callback_config, pattern="^(cfg_|sal_|niv_|vag_)"))
+
 
     application.run_polling()
 
