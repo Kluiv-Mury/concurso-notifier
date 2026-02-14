@@ -1,11 +1,12 @@
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from config import TELEGRAM_TOKEN, logger
 from bot.handlers import (
-    start, help, uf, concursos, todos, config, callback_config, criar_tabelas
+    start, help, uf, concursos, todos, criar_tabelas
 )
 from bot.jobs import (
     atualizar_base_concursos, buscar_e_enviar_concursos
 )
+from bot.menu_config import config, callback_config
 
 def configurar_agendador(application: Application):
     application.job_queue.run_repeating(atualizar_base_concursos, interval=61 * 60, first=20)

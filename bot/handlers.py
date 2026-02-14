@@ -155,7 +155,8 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for concurso in concursos_lista:
         mensagem = (
             f"🔔 <b>{concurso['titulo']}</b>\n"
-            f"💵 <b>Max:</b> {concurso['salario_max']} | 🏢 <b>Vagas:</b> {concurso['vagas']}\n"
+            f"💵 <b>Max:</b> {concurso['salario_max']}\n"
+            f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"  
             f"📅 <b>Até:</b> {concurso['inscricoes_ate']}\n"
             f"🔗 {concurso['link']}"
         )
@@ -164,114 +165,4 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("✅ Fim da lista.")
 
-# --- MENUS DE CONFIGURAÇÃO ---
 
-async def config(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message:
-        msg = update.message
-        user_id = update.effective_chat.id
-    else:
-        query = update.callback_query
-        msg = query.message
-        user_id = query.from_user.id
-
-    salario, nivel, vagas = obter_filtros(user_id)
-    texto = (
-        "⚙️ <b>Configurações de filtros</b>\n\n"
-        f"💵 Salário mínimo: <b>{salario or '—'}</b>\n"
-        f"🎓 Nível: <b>{nivel or '—'}</b>\n"
-        f"🏢 Vagas mínimas: <b>{vagas or '—'}</b>\n"
-    )
-    teclado = [
-        [InlineKeyboardButton("💵 Salário", callback_data="cfg_salario"), InlineKeyboardButton("🎓 Nível", callback_data="cfg_nivel")],
-        [InlineKeyboardButton("🏢 Vagas", callback_data="cfg_vagas"), InlineKeyboardButton("♻️ Reset", callback_data="cfg_reset")]
-    ]
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(texto, reply_markup=InlineKeyboardMarkup(teclado), parse_mode="HTML")
-    else:
-        await msg.reply_text(texto, reply_markup=InlineKeyboardMarkup(teclado), parse_mode="HTML")
-
-async def menu_salario(query):
-    teclado = [
-        [InlineKeyboardButton("3k+", callback_data="sal_3000"), InlineKeyboardButton("5k+", callback_data="sal_5000")],
-        [InlineKeyboardButton("8k+", callback_data="sal_8000"), InlineKeyboardButton("10k+", callback_data="sal_10000")],
-        [InlineKeyboardButton("12k+", callback_data="sal_12000")],
-        [InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")]
-    ]
-    await query.edit_message_text("💵 <b>Escolha o salário mínimo:</b>", reply_markup=InlineKeyboardMarkup(teclado), parse_mode="HTML")
-
-async def menu_nivel(query):
-    teclado = [
-        [InlineKeyboardButton("Médio", callback_data="niv_medio"), InlineKeyboardButton("Técnico", callback_data="niv_tecnico")],
-        [InlineKeyboardButton("Superior", callback_data="niv_superior"), InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")]
-    ]
-    await query.edit_message_text("🎓 <b>Escolha o nível desejado:</b>", reply_markup=InlineKeyboardMarkup(teclado), parse_mode="HTML")
-
-async def menu_vagas(query):
-    teclado = [
-        [InlineKeyboardButton("5+", callback_data="vag_5"), InlineKeyboardButton("10+", callback_data="vag_10")],
-        [InlineKeyboardButton("20+", callback_data="vag_20"), InlineKeyboardButton("50+", callback_data="vag_50")],
-        [InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")]
-    ]
-    await query.edit_message_text("🏢 <b>Escolha o mínimo de vagas:</b>", reply_markup=InlineKeyboardMarkup(teclado), parse_mode="HTML")
-
-async def callback_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    data = query.data
-
-    if data == "cfg_menu": await config(update, context); return
-    if data == "cfg_salario": await menu_salario(query); return
-    if data == "cfg_nivel": await menu_nivel(query); return
-    if data == "cfg_vagas": await menu_vagas(query); return
-    
-    if data == "cfg_reset":
-        atualizar_filtros(user_id, None, None, None)
-        await config(update, context)
-        return
-
-    if data.startswith("niv_"):
-        mapa = {"medio": "Médio", "tecnico": "Técnico", "superior": "Superior"}
-        atualizar_filtros(user_id, nivel=mapa.get(data.split("_")[1]))
-    elif data.startswith("sal_"):
-        atualizar_filtros(user_id, salario=int(data.split("_")[1]))
-    elif data.startswith("vag_"):
-        atualizar_filtros(user_id, vagas=int(data.split("_")[1]))
-
-    await config(update, context)
-
-# --- JOBS (TAREFAS AGENDADAS) ---
-
-async def atualizar_base_concursos(context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Iniciando scraping global...")
-    for uf in SIGLAS_ESTADOS.values():
-        logger.info(f"Scraping concursos da UF: {uf}")
-        concursos = concursos_ache_conc(uf)
-        if not concursos: continue
-
-        for c in concursos:
-            adicionar_concurso(c['titulo'], c['link'], c['inscricoes_ate'], c['vagas'], c['salario_max'], c['nivel'], uf)
-    logger.info("Fim do scraping global.")
-
-async def buscar_e_enviar_concursos(context: ContextTypes.DEFAULT_TYPE):
-    usuarios = await listar_usuarios()
-    logger.info(f"Enviando alertas para {len(usuarios)} usuários.")
-
-    for user_id in usuarios:
-        ufs = obter_ufs_usuario(user_id)
-        if not ufs: continue
-
-        salario, nivel, vagas = obter_filtros(user_id)
-        concursos = buscar_concursos_filtrados(ufs, salario, nivel, vagas)
-        
-        for c in concursos:
-            if concurso_ja_enviado(user_id, c['id']): continue
-            adicionar_concurso_enviado(user_id, c['id'])
-            
-            msg = f"🔔 <b>{c['titulo']}</b>\n💵 {c['salario_max']} | 🏢 {c['vagas']} vagas\n📅 Até: {c['inscricoes_ate']}\n🔗 {c['link']}"
-            try:
-                await context.bot.send_message(user_id, msg, parse_mode='HTML')
-            except Exception as e:
-                logger.error(f"Erro envio {user_id}: {e}")
