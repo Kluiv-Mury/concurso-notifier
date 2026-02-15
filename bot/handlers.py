@@ -2,15 +2,15 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
+from db import notificacoes_ativas as get_notificacoes_ativas  
 
 from config import TELEGRAM_TOKEN, logger, SIGLAS_ESTADOS, SLUG_PARA_SIGLA
 
 from db import (
-    adicionar_usuario, criar_indice_user_concursos_enviados, usuario_ja_registrado, listar_usuarios, 
+    adicionar_usuario, criar_indice_user_concursos_enviados, usuario_ja_registrado, 
     criar_tabela_user_concursos_enviados, adicionar_concurso_enviado, concurso_ja_enviado, 
     atualizar_uf_usuario, criar_tabela_user_ufs, criar_tabela_concurso, criar_tabela_users, 
-    adicionar_uf_usuario, obter_ufs_usuario, adicionar_concurso, buscar_concursos_por_ufs, 
-    buscar_concursos_filtrados, obter_filtros, atualizar_filtros
+    obter_ufs_usuario, buscar_concursos_filtrados, obter_filtros
 )
 
 from scrapping import concursos_ache_conc
@@ -166,3 +166,33 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Fim da lista.")
 
 
+
+async def menu_notificacoes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    status = get_notificacoes_ativas(user_id)
+
+    texto = "⚙️ <b>Configuração de Notificações</b>\n\n"
+    texto += "Escolha se deseja receber notificações de novos concursos.\n\n"
+
+    if status == 1:
+        texto += "<b>Notificações Ativas</b>"
+        teclado = [
+            [InlineKeyboardButton("❌ Desativar Notificações", callback_data="desativar_notificacao")],
+            [InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")]
+        ]
+    else:
+        texto += "<b>Notificações Desativadas</b>"
+        teclado = [
+            [InlineKeyboardButton("✅ Ativar Notificações", callback_data="ativar_notificacao")],
+            [InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")]
+        ]
+
+    await query.edit_message_text(
+        texto,
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="HTML"
+    )

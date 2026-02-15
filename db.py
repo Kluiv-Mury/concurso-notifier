@@ -382,3 +382,27 @@ def obter_filtros(user_id):
     row = cursor.fetchone()
     conn.close()
     return row if row else (None, None, None)  
+
+def atualizar_notificacoes_usuario(user_id, notificacoes_ativas):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE users
+        SET notificacoes_ativas = ?
+        WHERE chat_id = ?
+    """, (notificacoes_ativas, user_id))
+    conn.commit()
+    conn.close()
+
+
+def notificacoes_ativas(user_id):
+    """Obtém o status das notificações para o usuário a partir do banco de dados"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT notificacoes_ativas FROM users WHERE chat_id = ?", (user_id,))
+    notificacoes_ativas = cursor.fetchone()
+    conn.close()
+
+    if notificacoes_ativas is None:
+        return 1
+    return notificacoes_ativas[0]

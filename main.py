@@ -6,7 +6,7 @@ from bot.handlers import (
 from bot.jobs import (
     atualizar_base_concursos, buscar_e_enviar_concursos
 )
-from bot.menu_config import config, callback_config
+from bot.menu_config import config, callback_config, menu_notificacoes
 
 def configurar_agendador(application: Application):
     application.job_queue.run_repeating(atualizar_base_concursos, interval=61 * 60, first=20)
@@ -25,7 +25,8 @@ def main():
     application.add_handler(CommandHandler("concursos", concursos))
     application.add_handler(CommandHandler("todos", todos))
     application.add_handler(CommandHandler("config", config))
-    application.add_handler(CallbackQueryHandler(callback_config, pattern="^(cfg_|sal_|niv_|vag_)"))
+
+    application.add_handler(CallbackQueryHandler(callback_config))
 
     print("🤖 Bot iniciado!")
     application.run_polling()
