@@ -1,198 +1,180 @@
+"""Handlers dos comandos do bot."""
+
+from __future__ import annotations
+
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-from db import notificacoes_ativas as get_notificacoes_ativas  
+from telegram import Update
+from telegram.ext import ContextTypes
 
-from config import TELEGRAM_TOKEN, logger, SIGLAS_ESTADOS, SLUG_PARA_SIGLA
-
+from bot.formatacao import agrupar_em_mensagens, formatar_ufs
+from config import SIGLAS_ESTADOS, logger
 from db import (
-    adicionar_usuario, criar_indice_user_concursos_enviados, usuario_ja_registrado, 
-    criar_tabela_user_concursos_enviados, adicionar_concurso_enviado, concurso_ja_enviado, 
-    atualizar_uf_usuario, criar_tabela_user_ufs, criar_tabela_concurso, criar_tabela_users, 
-    obter_ufs_usuario, buscar_concursos_filtrados, obter_filtros
+    adicionar_usuario,
+    atualizar_uf_usuario,
+    buscar_concursos,
+    marcar_enviados,
+    obter_filtros,
+    obter_ufs_usuario,
+    usuario_ja_registrado,
 )
 
-from scrapping import concursos_ache_conc
+# Pausa entre mensagens de uma listagem longa (~1 msg/s por chat na API).
+PAUSA_ENTRE_MENSAGENS = 0.6
 
 
-def criar_tabelas():
-    criar_tabela_concurso()
-    criar_tabela_users()
-    criar_tabela_user_ufs()
-    criar_tabela_user_concursos_enviados()
-    criar_indice_user_concursos_enviados()
+async def _garantir_usuario(update: Update) -> int:
+    """Registra o usuário se ainda não existir e devolve o chat_id.
+
+    Chamado em todo handler porque `user_ufs` referencia `users`: alguém que
+    mande /uf antes de /start esbarraria na foreign key.
+    """
+    chat = update.effective_chat
+    if not await asyncio.to_thread(usuario_ja_registrado, chat.id):
+        await asyncio.to_thread(adicionar_usuario, chat.id, chat.first_name)
+    return chat.id
 
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = await _garantir_usuario(update)
+    nome = update.effective_chat.first_name or "!"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_chat.id
-    nome = update.effective_chat.first_name
+    mensagem = (
+        f"Olá, {nome}! Sou seu assistente de concursos públicos.\n\n"
+        "Estou aqui para te ajudar a encontrar as melhores oportunidades de "
+        "concursos no Brasil.\n\n"
+        "Comece registrando seus estados de interesse:\n"
+        "<code>/uf RJ SP</code>\n\n"
+        "Para ver tudo que sei fazer, digite <b>/help</b>."
+    )
 
-    if not usuario_ja_registrado(user_id):
-        adicionar_usuario(user_id, nome)
+    await update.effective_message.reply_text(mensagem, parse_mode="HTML")
+    logger.info("Usuário %s iniciou o bot.", user_id)
 
-    mensagem = f"Olá, {nome}! Sou seu assistente de concursos públicos.\n\n"
-    mensagem += "Estou aqui para te ajudar a encontrar as melhores oportunidades de concursos no Brasil.\n\n"
-    mensagem += "Use os comandos para registrar seus <b>estados de interesse</b> e receber informações.\n\n"
-    mensagem += "Para mais detalhes sobre como usar o bot, digite <b>/help</b>.\n"
 
-    await update.message.reply_text(mensagem, parse_mode='HTML')
-    logger.info(f"Novo usuário {user_id} iniciou o bot.")
-
-async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_chat.id
-
+async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     mensagem = (
         "<b>Guia de Comandos do Bot de Concursos</b>\n\n"
 
-        "<b>/help</b>\n"
-        "Mostra esta mensagem com os comandos disponíveis.\n\n"
-
         "<b>/uf</b>\n"
-        "Defina ou veja os estados de interesse para receber concursos:\n"
-        "  • /uf RJ            → define Rio de Janeiro como estado de interesse.\n"
-        "  • /uf RJ SP MG      → define Rio de Janeiro, São Paulo e Minas Gerais.\n"
-        "  • /uf               → mostra os estados que você já está acompanhando.\n\n"
+        "Define ou mostra seus estados de interesse:\n"
+        "  • <code>/uf RJ</code> → acompanha o Rio de Janeiro.\n"
+        "  • <code>/uf RJ SP MG</code> → acompanha os três.\n"
+        "  • <code>/uf</code> → mostra os estados já registrados.\n\n"
 
         "<b>/concursos</b>\n"
-        "Receba imediatamente os concursos abertos para os seus estados de interesse que você ainda não recebeu.\n\n"
+        "Envia na hora os concursos abertos que você ainda não recebeu.\n\n"
 
         "<b>/todos</b>\n"
-        "Lista todos os concursos ativos nos seus estados de interesse, incluindo detalhes como salário, vagas, nível e prazo de inscrição.\n\n"
+        "Lista todos os concursos com inscrição aberta nos seus estados, "
+        "mesmo os que você já viu.\n\n"
 
         "<b>/config</b>\n"
-        "Ajuste filtros de concursos por salário mínimo, nível e número mínimo de vagas.\n\n"
+        "Ajusta filtros de salário mínimo, nível e vagas mínimas, e liga ou "
+        "desliga as notificações automáticas.\n\n"
 
-        "<b>Além disso, a cada 1 hora, atualizarei a base de concursos e enviarei os que você ainda não recebeu, respeitando suas regiões de interesse.</b>"
+        "<b>Automático:</b> a cada hora eu atualizo a base e te aviso dos "
+        "concursos novos que combinam com seus estados e filtros."
     )
 
-    await update.message.reply_text(mensagem, parse_mode="HTML")
-    logger.info(f"Usuário {user_id} solicitou ajuda. Enviando informações.")
+    await update.effective_message.reply_text(mensagem, parse_mode="HTML")
 
-async def uf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_chat.id
+
+async def uf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = await _garantir_usuario(update)
+    mensagem = update.effective_message
 
     if not context.args:
-        ufs = obter_ufs_usuario(user_id)
+        ufs = await asyncio.to_thread(obter_ufs_usuario, user_id)
         if not ufs:
-            await update.message.reply_text("❌ Você ainda não tem estados registrados. Use /uf para adicionar.")
+            await mensagem.reply_text(
+                "❌ Você ainda não tem estados registrados.\n"
+                "Exemplo: <code>/uf RJ SP</code>",
+                parse_mode="HTML",
+            )
         else:
-            ufs_maiusculas = [SLUG_PARA_SIGLA.get(uf, uf.upper()) for uf in ufs]
-            await update.message.reply_text(f"🌎 Seus estados de interesse:\n• " + ", ".join(ufs_maiusculas))
+            await mensagem.reply_text(f"🌎 Seus estados de interesse:\n• {formatar_ufs(ufs)}")
         return
 
-    ufs = [uf.lower() for uf in context.args]
-    ufs_validas = []
-    
-
-    for uf in ufs:
-        if uf in SIGLAS_ESTADOS:
-            ufs_validas.append(SIGLAS_ESTADOS[uf])
-        else:
-            await update.message.reply_text(f"❌ Sigla inválida: {uf.upper()}.")
-            logger.warning(f"Usuário {user_id} tentou usar sigla inválida: {uf}.")
-            return
-
-    atualizar_uf_usuario(user_id, ufs_validas)
-    ufs_maiusculas = [uf.upper() for uf in ufs]
-    await update.message.reply_text(f"🌍 Seus estados de interesse foram atualizados para:\n• " + ", ".join(ufs_maiusculas))
-    logger.info(f"Usuário {user_id} atualizou estados: {', '.join(ufs_maiusculas)}")
-
-async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_chat.id
-    ufs = obter_ufs_usuario(user_id)
-    if not ufs:
-        await update.message.reply_text("❌ Você não tem UFs registradas. Use /uf para registrar.")
-        return
-
-    salario, nivel, vagas = obter_filtros(user_id)
-    concursos_lista = buscar_concursos_filtrados(ufs, salario, nivel, vagas)
-
-    if not concursos_lista:
-        await update.message.reply_text("❌ Nenhum concurso novo encontrado para seus estados/filtros.")
-        return
-
-    count = 0
-    for concurso in concursos_lista:
-        if concurso_ja_enviado(user_id, concurso["id"]):
-            continue
-
-        adicionar_concurso_enviado(user_id, concurso["id"])
-        mensagem = (
-            f"🔔 <b>{concurso['titulo']}</b>\n"
-            f"💵 <b>Salário máximo:</b> {concurso['salario_max']}\n"
-            f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"
-            f"📅 <b>Até:</b> {concurso['inscricoes_ate']}\n"
-            f"🎓 <b>Nível:</b> {concurso['nivel']}\n\n"
-            f"🔗 {concurso['link']}"
+    siglas = [arg.strip().lower() for arg in context.args]
+    invalidas = [s for s in siglas if s not in SIGLAS_ESTADOS]
+    if invalidas:
+        await mensagem.reply_text(
+            f"❌ Sigla inválida: {', '.join(s.upper() for s in invalidas)}.\n"
+            "Use as siglas de duas letras, por exemplo: <code>/uf RJ SP MG</code>",
+            parse_mode="HTML",
         )
-        await update.message.reply_text(mensagem, parse_mode='HTML')
-        count += 1
-        
-    if count > 0:
-        await update.message.reply_text("📚 Todos os concursos foram atualizados!")
-    else:
-        await update.message.reply_text("✅ Você já viu todos os concursos disponíveis.")
-
-async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_chat.id
-    ufs = obter_ufs_usuario(user_id)
-    if not ufs:
-        await update.message.reply_text("❌ Você não tem UFs registradas.")
+        logger.warning("Usuário %s enviou siglas inválidas: %s", user_id, invalidas)
         return
 
-    salario, nivel, vagas = obter_filtros(user_id)
-    concursos_lista = buscar_concursos_filtrados(ufs, salario, nivel, vagas)
+    # Sem duplicatas, preservando a ordem digitada.
+    slugs = list(dict.fromkeys(SIGLAS_ESTADOS[s] for s in siglas))
+    await asyncio.to_thread(atualizar_uf_usuario, user_id, slugs)
 
-    if not concursos_lista:
-        await update.message.reply_text("📭 Nenhum concurso ativo no momento.")
-        return
-
-    await update.message.reply_text(f"📚 <b>Total encontrados:</b> {len(concursos_lista)}\n\n", parse_mode="HTML")
-    await asyncio.sleep(1)
-
-    for concurso in concursos_lista:
-        mensagem = (
-            f"🔔 <b>{concurso['titulo']}</b>\n"
-            f"💵 <b>Max:</b> {concurso['salario_max']}\n"
-            f"🏢 <b>Vagas:</b> {concurso['vagas']}\n"  
-            f"📅 <b>Até:</b> {concurso['inscricoes_ate']}\n"
-            f"🔗 {concurso['link']}"
-        )
-        await update.message.reply_text(mensagem, parse_mode="HTML")
-        await asyncio.sleep(0.2)
-    
-    await update.message.reply_text("✅ Fim da lista.")
-
-
-
-async def menu_notificacoes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-
-    status = get_notificacoes_ativas(user_id)
-
-    texto = "⚙️ <b>Configuração de Notificações</b>\n\n"
-    texto += "Escolha se deseja receber notificações de novos concursos.\n\n"
-
-    if status == 1:
-        texto += "<b>Notificações Ativas</b>"
-        teclado = [
-            [InlineKeyboardButton("❌ Desativar Notificações", callback_data="desativar_notificacao")],
-            [InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")]
-        ]
-    else:
-        texto += "<b>Notificações Desativadas</b>"
-        teclado = [
-            [InlineKeyboardButton("✅ Ativar Notificações", callback_data="ativar_notificacao")],
-            [InlineKeyboardButton("⬅️ Voltar", callback_data="cfg_menu")]
-        ]
-
-    await query.edit_message_text(
-        texto,
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="HTML"
+    await mensagem.reply_text(
+        f"🌍 Seus estados de interesse agora são:\n• {formatar_ufs(slugs)}"
     )
+    logger.info("Usuário %s atualizou estados: %s", user_id, slugs)
+
+
+async def _listar(update: Update, apenas_novos: bool) -> None:
+    """Base de /concursos (só novidades) e /todos (tudo que está aberto)."""
+    user_id = await _garantir_usuario(update)
+    mensagem = update.effective_message
+
+    ufs = await asyncio.to_thread(obter_ufs_usuario, user_id)
+    if not ufs:
+        await mensagem.reply_text(
+            "❌ Você ainda não tem estados registrados.\n"
+            "Exemplo: <code>/uf RJ SP</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    salario, nivel, vagas = await asyncio.to_thread(obter_filtros, user_id)
+    concursos = await asyncio.to_thread(
+        buscar_concursos,
+        ufs,
+        salario,
+        nivel,
+        vagas,
+        user_id if apenas_novos else None,
+    )
+
+    if not concursos:
+        if apenas_novos:
+            await mensagem.reply_text(
+                "✅ Você já viu todos os concursos abertos para seus estados e filtros."
+            )
+        else:
+            await mensagem.reply_text(
+                "📭 Nenhum concurso com inscrição aberta nos seus estados e filtros.\n"
+                "Tente afrouxar os filtros em /config."
+            )
+        return
+
+    await mensagem.reply_text(
+        f"📚 <b>{len(concursos)} concurso(s) encontrado(s)</b> em {formatar_ufs(ufs)}.",
+        parse_mode="HTML",
+    )
+
+    enviados: list[int] = []
+    for texto, ids in agrupar_em_mensagens(concursos, compacto=not apenas_novos):
+        await mensagem.reply_text(texto, parse_mode="HTML")
+        enviados.extend(ids)
+        await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
+
+    if apenas_novos and enviados:
+        # Marca depois do envio: se falhar no meio, o restante volta na
+        # próxima vez em vez de sumir.
+        await asyncio.to_thread(marcar_enviados, user_id, enviados)
+
+    await mensagem.reply_text("✅ Fim da lista.")
+
+
+async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _listar(update, apenas_novos=True)
+
+
+async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _listar(update, apenas_novos=False)

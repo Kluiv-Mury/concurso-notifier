@@ -1,5 +1,6 @@
-requests==2.28.1
-beautifulsoup4==4.12.2
-python-telegram-bot==20.1
-python-dotenv==1.0.0
-asyncio==3.4.3
+# O extra [job-queue] traz o APScheduler. Sem ele, Application.job_queue é
+# None e as tarefas periódicas não rodam.
+python-telegram-bot[job-queue]>=21.0,<23
+requests>=2.32.0,<3
+beautifulsoup4>=4.12.3,<5
+python-dotenv>=1.0.0,<2
