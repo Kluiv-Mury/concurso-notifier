@@ -14,7 +14,7 @@ raspados periodicamente e guardados em SQLite.
 | `/uf RJ SP` | Define os estados de interesse. Sem argumentos, mostra os atuais. |
 | `/concursos` | Envia os concursos abertos que o usuário ainda não recebeu. |
 | `/todos` | Lista todos os concursos abertos nos estados escolhidos. |
-| `/palavra professor` | Filtra por palavra no título. Sem argumentos, mostra as atuais. |
+| `/contem professor` | Filtra por palavra no título. Sem argumentos, mostra as atuais. |
 | `/favoritos` | Lista os concursos guardados no botão ⭐. |
 | `/config` | Menu inline: salário mínimo, nível, vagas mínimas e liga/desliga notificações. |
 | `/deletar` | Apaga todos os dados do usuário. Pede confirmação. |

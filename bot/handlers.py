@@ -81,6 +81,15 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Lista todos os concursos com inscrição aberta nos seus estados, "
         "mesmo os que você já viu.\n\n"
 
+        "<b>/contem</b>\n"
+        "Filtra por palavra no título do concurso:\n"
+        "  • <code>/contem professor</code> → só o que menciona professor.\n"
+        "  • <code>/contem medico enfermeiro</code> → qualquer uma das duas.\n"
+        "  • <code>/contem limpar</code> → volta a receber tudo.\n\n"
+
+        "<b>/favoritos</b>\n"
+        "Mostra os concursos que você guardou no botão ⭐.\n\n"
+
         "<b>/config</b>\n"
         "Ajusta filtros de salário mínimo, nível e vagas mínimas, e liga ou "
         "desliga as notificações automáticas.\n\n"
@@ -211,7 +220,7 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Palavras-chave
 # --------------------------------------------------------------------------- #
 
-async def palavra(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def contem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Define ou mostra as palavras que o título precisa conter.
 
     Os filtros existentes eram todos quantitativos — salário, nível, vagas —
@@ -227,14 +236,14 @@ async def palavra(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await mensagem.reply_text(
                 "🔍 Você não filtra por palavra: recebe todos os concursos "
                 "dos seus estados.\n\n"
-                "Para filtrar: <code>/palavra professor medico</code>\n"
+                "Para filtrar: <code>/contem professor medico</code>\n"
                 "Basta uma das palavras aparecer no título.",
                 parse_mode="HTML",
             )
         else:
             await mensagem.reply_text(
                 f"🔍 Suas palavras-chave:\n• {', '.join(palavras)}\n\n"
-                "Para limpar: <code>/palavra limpar</code>",
+                "Para limpar: <code>/contem limpar</code>",
                 parse_mode="HTML",
             )
         return

@@ -15,9 +15,9 @@ from bot.handlers import (
     callback_deletar,
     callback_favoritar,
     concursos,
+    contem,
     deletar,
     favoritos,
-    palavra,
     start,
     todos,
     uf,
@@ -44,7 +44,7 @@ COMANDOS = [
     BotCommand("uf", "Definir ou ver seus estados de interesse"),
     BotCommand("concursos", "Ver os concursos que você ainda não recebeu"),
     BotCommand("todos", "Listar todos os concursos abertos"),
-    BotCommand("palavra", "Filtrar por palavra no título"),
+    BotCommand("contem", "Filtrar por palavra no título"),
     BotCommand("favoritos", "Ver os concursos que você guardou"),
     BotCommand("config", "Ajustar filtros e notificações"),
     BotCommand("deletar", "Apagar todos os meus dados"),
@@ -96,7 +96,7 @@ def main() -> None:
     application.add_handler(CommandHandler("concursos", concursos))
     application.add_handler(CommandHandler("todos", todos))
     application.add_handler(CommandHandler("config", config))
-    application.add_handler(CommandHandler("palavra", palavra))
+    application.add_handler(CommandHandler("contem", contem))
     application.add_handler(CommandHandler("favoritos", favoritos))
     application.add_handler(CommandHandler("deletar", deletar))
 
