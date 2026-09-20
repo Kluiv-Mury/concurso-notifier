@@ -14,9 +14,12 @@ __pycache__/
 # Banco e logs (dados de runtime)
 *.db
 *.db.bak-*
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 *.log
+backups/
 
 # Editores / SO
 .vscode/

@@ -52,6 +52,10 @@ def conectar() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Recomendado com WAL: no pior caso (queda de energia) perdem-se as
+    # últimas transações, mas o arquivo nunca corrompe. `synchronous` é por
+    # conexão, diferente de `journal_mode`, que fica gravado no banco.
+    conn.execute("PRAGMA synchronous = NORMAL")
     try:
         yield conn
         conn.commit()
@@ -290,6 +294,16 @@ def criar_tabelas() -> None:
         conn.execute("PRAGMA foreign_keys = OFF")
         # Impede que o RENAME final saia reescrevendo REFERENCES alheias.
         conn.execute("PRAGMA legacy_alter_table = ON")
+
+        # WAL: leitor não bloqueia escritor nem vice-versa. No modo `delete`
+        # (padrão), o job de scraping trancava o banco inteiro enquanto
+        # gravava e um /todos simultâneo ficava esperando. É gravado dentro
+        # do arquivo do banco, então basta aplicar uma vez — e precisa ser
+        # fora de transação.
+        modo = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+        if modo.lower() != "wal":
+            logger.warning("journal_mode ficou em '%s' (WAL indisponível).", modo)
+
         conn.execute("BEGIN")
         try:
             versao = _versao_esquema(conn)
@@ -546,6 +560,68 @@ def buscar_concursos(
         linhas = conn.execute(query, params).fetchall()
 
     return [dict(linha) for linha in linhas]
+
+
+# --------------------------------------------------------------------------- #
+# Backup
+# --------------------------------------------------------------------------- #
+
+MAX_BACKUPS = 7
+_PADRAO_BACKUP = "concursos-*.db"
+
+
+def _dir_backup() -> Path:
+    """Resolvido em tempo de chamada, para acompanhar o DB_FILE em uso."""
+    return Path(DB_FILE).resolve().parent / "backups"
+
+
+def _podar_backups(manter: int) -> int:
+    """Apaga os backups mais antigos, preservando os `manter` mais recentes."""
+    if manter < 1:
+        return 0
+    # O carimbo de data no nome faz a ordem alfabética ser a cronológica.
+    antigos = sorted(_dir_backup().glob(_PADRAO_BACKUP))[:-manter]
+    for arquivo in antigos:
+        arquivo.unlink()
+    return len(antigos)
+
+
+def fazer_backup(manter: int = MAX_BACKUPS) -> Path:
+    """Cópia consistente do banco, com o bot rodando. Devolve o caminho.
+
+    Usa a API `Connection.backup()` do SQLite, não uma cópia do arquivo:
+    copiar no meio de uma escrita captura um estado inconsistente, e em WAL
+    ainda deixaria de fora o que está no `-wal` e não foi para o banco.
+    """
+    destino_dir = _dir_backup()
+    destino_dir.mkdir(parents=True, exist_ok=True)
+
+    # O carimbo tem resolução de segundo: duas chamadas dentro do mesmo
+    # segundo colidiriam e a segunda sobrescreveria a primeira sem avisar —
+    # num backup, perder silenciosamente é o pior desfecho possível.
+    carimbo = f"{datetime.now():%Y%m%d-%H%M%S}"
+    destino = destino_dir / f"concursos-{carimbo}.db"
+    sufixo = 1
+    while destino.exists():
+        destino = destino_dir / f"concursos-{carimbo}-{sufixo}.db"
+        sufixo += 1
+
+    origem = sqlite3.connect(DB_FILE, timeout=30)
+    try:
+        copia = sqlite3.connect(destino)
+        try:
+            origem.backup(copia)
+        finally:
+            copia.close()
+    finally:
+        origem.close()
+
+    removidos = _podar_backups(manter)
+    logger.info(
+        "Backup em %s (%.1f KB); %d antigo(s) removido(s).",
+        destino.name, destino.stat().st_size / 1024, removidos,
+    )
+    return destino
 
 
 def marcar_enviados(user_id: int, concurso_ids: Sequence[int]) -> None:

@@ -12,6 +12,7 @@ from config import SIGLAS_ESTADOS, logger
 from db import (
     atualizar_notificacoes_usuario,
     buscar_concursos,
+    fazer_backup,
     listar_usuarios,
     marcar_enviados,
     obter_filtros,
@@ -26,6 +27,21 @@ MAX_ALERTAS_POR_CICLO = 10
 
 # Pausa entre mensagens: a API aceita ~1 msg/s por chat.
 PAUSA_ENTRE_MENSAGENS = 1.0
+
+
+async def backup_do_banco(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Salva uma cópia do banco.
+
+    O arquivo guarda os usuários, as UFs de cada um, os filtros e o histórico
+    de envios. Perder isso significa não só perder os cadastros: com o
+    histórico zerado, tudo volta a ser novidade e cada usuário é notificado
+    da base inteira outra vez.
+    """
+    try:
+        await asyncio.to_thread(fazer_backup)
+    except Exception:
+        # Backup é rede de segurança: falhar aqui não pode derrubar o bot.
+        logger.exception("Falha ao fazer backup do banco.")
 
 
 async def atualizar_base_concursos(context: ContextTypes.DEFAULT_TYPE) -> None:

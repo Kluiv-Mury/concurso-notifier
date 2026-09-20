@@ -39,6 +39,7 @@ def _intervalo(nome: str, padrao_minutos: int) -> int:
 
 INTERVALO_SCRAPING = _intervalo("INTERVALO_SCRAPING_MIN", 61)
 INTERVALO_ALERTAS = _intervalo("INTERVALO_ALERTAS_MIN", 17)
+INTERVALO_BACKUP = _intervalo("INTERVALO_BACKUP_MIN", 24 * 60)
 
 SIGLAS_ESTADOS = {
     "ac": "acre", "al": "alagoas", "am": "amazonas", "ap": "amapa",
