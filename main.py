@@ -10,7 +10,15 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from bot.handlers import ajuda, concursos, start, todos, uf
+from bot.handlers import (
+    ajuda,
+    callback_deletar,
+    concursos,
+    deletar,
+    start,
+    todos,
+    uf,
+)
 from bot.jobs import (
     atualizar_base_concursos,
     backup_do_banco,
@@ -32,6 +40,7 @@ COMANDOS = [
     BotCommand("concursos", "Ver os concursos que você ainda não recebeu"),
     BotCommand("todos", "Listar todos os concursos abertos"),
     BotCommand("config", "Ajustar filtros e notificações"),
+    BotCommand("deletar", "Apagar todos os meus dados"),
     BotCommand("help", "Ver o guia de comandos"),
 ]
 
@@ -78,6 +87,11 @@ def main() -> None:
     application.add_handler(CommandHandler("concursos", concursos))
     application.add_handler(CommandHandler("todos", todos))
     application.add_handler(CommandHandler("config", config))
+    application.add_handler(CommandHandler("deletar", deletar))
+
+    # O `pattern` precisa vir antes: dentro de um mesmo grupo só o primeiro
+    # handler compatível roda, e `callback_config` aceita qualquer callback.
+    application.add_handler(CallbackQueryHandler(callback_deletar, pattern=r"^del_"))
     application.add_handler(CallbackQueryHandler(callback_config))
     application.add_error_handler(tratar_erro)
 

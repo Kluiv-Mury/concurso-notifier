@@ -25,12 +25,19 @@ TIMEOUT = 15
 # Intervalo entre requisições, para não martelar a origem.
 PAUSA_ENTRE_ESTADOS = (1.5, 3.5)
 
+# User-Agent que identifica o bot em vez de se passar por Chrome. Medido
+# contra a origem: o conteúdo servido é idêntico com UA de navegador, de bot
+# ou o padrão do requests. Na prática também reduz o risco de bloqueio —
+# administrador barra tráfego anônimo suspeito, não bot identificado, com
+# contato e comportamento educado.
+USER_AGENT = (
+    "ConcursoNotifierBot/1.0 "
+    "(+https://github.com/Kluiv-Mury/concurso-notifier)"
+)
+
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                  "Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": USER_AGENT,
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    "Referer": "https://www.google.com/",
 }
 
 session = requests.Session()

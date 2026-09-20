@@ -377,6 +377,46 @@ def obter_ufs_usuario(user_id: int) -> list[str]:
     return [linha["uf"] for linha in linhas]
 
 
+def remover_usuario(user_id: int) -> dict[str, int]:
+    """Apaga o usuário e tudo ligado a ele. Devolve o que saiu de cada tabela.
+
+    Apaga explicitamente das três tabelas em vez de confiar no ON DELETE
+    CASCADE: `user_ufs` foi criada antes de o projeto usar foreign keys e,
+    no banco de produção, não tem nenhuma. O cascade limparia
+    `user_concursos_enviados` e deixaria as UFs órfãs — e o comportamento
+    seria diferente num banco recém-criado, que já nasce com a FK.
+    """
+    with conectar() as conn:
+        removidos = {}
+        for tabela, coluna in (
+            ("user_concursos_enviados", "user_id"),
+            ("user_ufs", "user_id"),
+            ("users", "chat_id"),
+        ):
+            cursor = conn.execute(
+                f"DELETE FROM {tabela} WHERE {coluna} = ?", (user_id,)
+            )
+            removidos[tabela] = cursor.rowcount
+
+    logger.info("Dados do usuário %s removidos: %s", user_id, removidos)
+    return removidos
+
+
+def resumo_do_usuario(user_id: int) -> dict[str, int]:
+    """Quanto dado existe sobre o usuário — para ele decidir antes de apagar."""
+    with conectar() as conn:
+        linha = conn.execute(
+            """
+            SELECT (SELECT COUNT(*) FROM user_ufs WHERE user_id = ?)  AS ufs,
+                   (SELECT COUNT(*) FROM user_concursos_enviados
+                     WHERE user_id = ?)                               AS enviados,
+                   (SELECT COUNT(*) FROM users WHERE chat_id = ?)     AS cadastro
+            """,
+            (user_id, user_id, user_id),
+        ).fetchone()
+    return dict(linha)
+
+
 def obter_filtros(user_id: int) -> tuple[Optional[int], Optional[str], Optional[int]]:
     with conectar() as conn:
         linha = conn.execute(

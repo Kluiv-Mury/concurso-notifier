@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from bot.formatacao import agrupar_em_mensagens, formatar_ufs
@@ -16,6 +16,8 @@ from db import (
     marcar_enviados,
     obter_filtros,
     obter_ufs_usuario,
+    remover_usuario,
+    resumo_do_usuario,
     usuario_ja_registrado,
 )
 
@@ -72,6 +74,10 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>/config</b>\n"
         "Ajusta filtros de salário mínimo, nível e vagas mínimas, e liga ou "
         "desliga as notificações automáticas.\n\n"
+
+        "<b>/deletar</b>\n"
+        "Apaga todos os seus dados daqui: cadastro, estados, filtros e "
+        "histórico. Pede confirmação antes.\n\n"
 
         "<b>Automático:</b> a cada hora eu atualizo a base e te aviso dos "
         "concursos novos que combinam com seus estados e filtros."
@@ -178,3 +184,57 @@ async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _listar(update, apenas_novos=False)
+
+
+# --------------------------------------------------------------------------- #
+# Remoção de dados
+# --------------------------------------------------------------------------- #
+
+async def deletar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mostra o que será apagado e pede confirmação.
+
+    Bloquear o bot só interrompe as mensagens; os dados continuariam aqui.
+    Este é o caminho para sair de verdade.
+    """
+    user_id = await _garantir_usuario(update)
+    resumo = await asyncio.to_thread(resumo_do_usuario, user_id)
+
+    texto = (
+        "🗑 <b>Apagar meus dados</b>\n\n"
+        "Guardo sobre você:\n"
+        f"• cadastro (seu ID e primeiro nome): {resumo['cadastro']}\n"
+        f"• estados de interesse: {resumo['ufs']}\n"
+        f"• filtros de salário, nível e vagas\n"
+        f"• histórico de concursos enviados: {resumo['enviados']}\n\n"
+        "Apagar remove tudo isso e <b>não dá para desfazer</b>. "
+        "Você pode voltar quando quiser com /start, começando do zero."
+    )
+
+    teclado = [
+        [InlineKeyboardButton("🗑 Sim, apagar tudo", callback_data="del_confirmar")],
+        [InlineKeyboardButton("⬅️ Cancelar", callback_data="del_cancelar")],
+    ]
+
+    await update.effective_message.reply_text(
+        texto, reply_markup=InlineKeyboardMarkup(teclado), parse_mode="HTML"
+    )
+
+
+async def callback_deletar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if query.data == "del_cancelar":
+        await query.edit_message_text("✅ Nada foi apagado. Seus dados continuam aqui.")
+        return
+
+    removidos = await asyncio.to_thread(remover_usuario, user_id)
+    logger.info("Usuário %s apagou os próprios dados: %s", user_id, removidos)
+
+    await query.edit_message_text(
+        "🗑 <b>Pronto, tudo apagado.</b>\n\n"
+        "Não guardo mais nenhum dado seu. Se um dia quiser voltar, "
+        "é só mandar /start.",
+        parse_mode="HTML",
+    )
