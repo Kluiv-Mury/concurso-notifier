@@ -1,0 +1,47 @@
+# Unit do systemd para rodar o bot como serviço em Linux.
+#
+#   sudo cp deploy/concurso-notifier.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now concurso-notifier
+#   journalctl -u concurso-notifier -f
+#
+# Ajuste User, WorkingDirectory e ExecStart para os caminhos reais.
+
+[Unit]
+Description=Bot de concursos públicos no Telegram
+# network-online, e não apenas network: o bot faz requisição HTTP logo no
+# boot e subir antes da rede estar de pé só gera erro na primeira rodada.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=concurso
+WorkingDirectory=/opt/concurso-notifier
+ExecStart=/opt/concurso-notifier/.venv/bin/python main.py
+
+# O ponto principal deste arquivo: crashou, volta em 10s; a máquina
+# reiniciou, sobe junto. Sem isso, um reboot derruba o bot em silêncio e
+# ninguém percebe — foi o que aconteceu com esta instalação em abril/2026,
+# e só se notou cinco meses depois.
+Restart=always
+RestartSec=10
+
+# Redundante desde a correção de fuso (a data de corte é calculada em
+# Python), mas mantém log e CURRENT_TIMESTAMP no horário de Brasília.
+Environment="TZ=America/Sao_Paulo"
+Environment="PYTHONUNBUFFERED=1"
+
+StandardOutput=journal
+StandardError=journal
+
+# Restrições básicas. O processo só precisa escrever no próprio diretório,
+# onde ficam concursos.db e backups/.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/concurso-notifier
+
+[Install]
+WantedBy=multi-user.target

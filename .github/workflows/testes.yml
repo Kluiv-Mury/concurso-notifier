@@ -1,0 +1,44 @@
+name: testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    # Ubuntu de propósito, e não Windows: o ambiente de desenvolvimento é
+    # Windows em UTC-3, o que esconde uma classe inteira de bug. O de fuso
+    # horário corrigido em ecda80a só aparecia fora daqui.
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 é a versão usada hoje; 3.12 antecipa o upgrade, já que um
+        # servidor novo provavelmente não vem com a 3.10.
+        python: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # Instalação limpa a partir do requirements — é o que a máquina de
+      # desenvolvimento nunca faz, e foi assim que o arquivo pôde ficar
+      # declarando python-telegram-bot 20.1 enquanto a venv rodava 22.6.
+      - name: Instalar dependências
+        run: pip install -r requirements-dev.txt
+
+      - name: Rodar a suíte
+        run: pytest -q
+
+      # Os testes não importam o main.py, então erro de import ou de
+      # registro de handler passaria batido sem esta etapa.
+      - name: Verificar que o bot carrega
+        env:
+          TELEGRAM_TOKEN: token-de-teste
+        run: python -c "import main; print('handlers:', len(main.COMANDOS))"

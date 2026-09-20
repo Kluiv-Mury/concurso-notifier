@@ -33,12 +33,21 @@ python main.py
 
 O banco `concursos.db` é criado e migrado sozinho na primeira execução.
 
+Para deixar o bot rodando de forma permanente (systemd no Linux, NSSM ou
+Agendador de Tarefas no Windows), veja [`deploy/`](deploy/). Rodar
+`python main.py` num terminal funciona, mas o processo morre no primeiro
+reboot e nada o levanta de volta.
+
 ## Testes
 
 ```bash
 pip install -r requirements-dev.txt
 pytest
 ```
+
+Rodam também no GitHub Actions a cada push e pull request, em Ubuntu e nas
+versões 3.10 e 3.12 do Python — ambiente diferente do de desenvolvimento de
+propósito, já que Windows em UTC-3 esconde uma classe inteira de bug.
 
 Cobrem os parsers, os filtros de busca, o controle de envios, a montagem das
 mensagens, o parser do HTML e a migração de um banco no esquema antigo.
@@ -56,6 +65,7 @@ bot/menu_config.py  /config e os callbacks dos botões inline
 bot/jobs.py       tarefas periódicas de scraping e envio
 bot/formatacao.py montagem e agrupamento das mensagens
 tests/            suíte pytest (sem rede, banco temporário)
+deploy/           systemd unit e instruções para rodar como serviço
 ```
 
 ## Dados e privacidade
@@ -141,4 +151,3 @@ estados.
   `NOME_KEY` ser configurada contêm os nomes em texto puro.
 - Perder a `NOME_KEY` torna os nomes já gravados ilegíveis. Não é crítico
   (nada depende deles hoje), mas é irreversível.
-- Sem CI: os testes só rodam se alguém lembrar.
