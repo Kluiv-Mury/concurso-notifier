@@ -27,7 +27,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator, Optional, Sequence
 
-from config import logger
+from cryptography.fernet import Fernet, InvalidToken
+
+from config import chave_nome, logger
 
 # Caminho absoluto: relativo ao CWD, rodar o bot de outra pasta criaria
 # um banco vazio novo sem nenhum aviso.
@@ -110,6 +112,110 @@ def parse_vagas(valor: Optional[str]) -> Optional[int]:
         return int(achado.group().replace(".", "").split(",")[0])
     except ValueError:
         return None
+
+
+# --------------------------------------------------------------------------- #
+# Cifra do nome do usuário
+# --------------------------------------------------------------------------- #
+#
+# `nome` é o único campo pessoal que dá para cifrar sem quebrar nada: nunca
+# entra em WHERE, ORDER BY nem JOIN. O `chat_id` não dá — é a chave de busca
+# e o endereço de envio, precisa estar legível.
+#
+# A chave mora no .env, no mesmo disco do banco, então isto protege os casos
+# em que o banco vaza sem o .env junto: um backup sincronizado para fora, ou
+# o arquivo indo parar onde não devia. Contra quem tem o servidor inteiro,
+# não protege — e nem tenta.
+
+def _cifrador() -> Optional[Fernet]:
+    """Fernet configurado, ou None se não há chave utilizável."""
+    chave = chave_nome()
+    if not chave:
+        return None
+    try:
+        return Fernet(chave.encode())
+    except (ValueError, TypeError):
+        logger.warning(
+            "NOME_KEY não é uma chave Fernet válida; o nome não será guardado. "
+            "Gere uma com: python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
+        )
+        return None
+
+
+def cifrar_nome(nome: Optional[str]) -> Optional[str]:
+    """Texto puro -> token Fernet. None quando não há nome ou não há chave.
+
+    Sem chave, devolver None é deliberado: é melhor não guardar do que
+    guardar em claro achando que está protegido.
+    """
+    if not nome:
+        return None
+    cifrador = _cifrador()
+    if cifrador is None:
+        return None
+    return cifrador.encrypt(nome.encode()).decode()
+
+
+def decifrar_nome(valor: Optional[str]) -> Optional[str]:
+    """Token Fernet -> texto puro. None se ilegível (chave trocada ou perdida).
+
+    Não levanta: nome é dado cosmético, e perder a chave não pode derrubar
+    o bot inteiro.
+    """
+    if not valor:
+        return None
+    cifrador = _cifrador()
+    if cifrador is None:
+        return None
+    try:
+        return cifrador.decrypt(valor.encode()).decode()
+    except InvalidToken:
+        return None
+
+
+def _esta_cifrado(valor: str) -> bool:
+    """Distingue token Fernet de texto puro remanescente.
+
+    Tenta decifrar em vez de olhar o prefixo: o Fernet rejeita texto puro
+    com InvalidToken, o que torna a checagem exata em vez de heurística.
+    """
+    cifrador = _cifrador()
+    if cifrador is None:
+        return False
+    try:
+        cifrador.decrypt(valor.encode())
+        return True
+    except InvalidToken:
+        return False
+
+
+def cifrar_nomes_pendentes() -> int:
+    """Cifra nomes que ainda estão em texto puro. Devolve quantos converteu.
+
+    Roda a cada boot em vez de ser uma migração numerada de uma vez só: a
+    chave pode ser configurada depois, e aí os nomes antigos precisam ser
+    convertidos nesse momento. Idempotente — o que já está cifrado é pulado.
+    """
+    if _cifrador() is None:
+        return 0
+
+    with conectar() as conn:
+        pendentes = [
+            (cifrar_nome(linha["nome"]), linha["chat_id"])
+            for linha in conn.execute(
+                "SELECT chat_id, nome FROM users WHERE nome IS NOT NULL AND nome != ''"
+            )
+            if not _esta_cifrado(linha["nome"])
+        ]
+        if pendentes:
+            conn.executemany(
+                "UPDATE users SET nome = ? WHERE chat_id = ?", pendentes
+            )
+
+    if pendentes:
+        logger.info("%d nome(s) convertidos de texto puro para cifrado.", len(pendentes))
+    return len(pendentes)
 
 
 # --------------------------------------------------------------------------- #
@@ -327,6 +433,8 @@ def criar_tabelas() -> None:
     finally:
         conn.close()
 
+    cifrar_nomes_pendentes()
+
 
 # --------------------------------------------------------------------------- #
 # Usuários
@@ -335,7 +443,8 @@ def criar_tabelas() -> None:
 def adicionar_usuario(chat_id: int, nome: Optional[str]) -> None:
     with conectar() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO users (chat_id, nome) VALUES (?, ?)", (chat_id, nome)
+            "INSERT OR IGNORE INTO users (chat_id, nome) VALUES (?, ?)",
+            (chat_id, cifrar_nome(nome)),
         )
 
 
@@ -375,6 +484,15 @@ def obter_ufs_usuario(user_id: int) -> list[str]:
             "SELECT uf FROM user_ufs WHERE user_id = ? ORDER BY uf", (user_id,)
         ).fetchall()
     return [linha["uf"] for linha in linhas]
+
+
+def obter_nome(user_id: int) -> Optional[str]:
+    """Nome do usuário, decifrado. None se não há nome, chave ou ela mudou."""
+    with conectar() as conn:
+        linha = conn.execute(
+            "SELECT nome FROM users WHERE chat_id = ?", (user_id,)
+        ).fetchone()
+    return decifrar_nome(linha["nome"]) if linha else None
 
 
 def remover_usuario(user_id: int) -> dict[str, int]:

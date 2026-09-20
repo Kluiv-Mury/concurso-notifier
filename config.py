@@ -63,6 +63,20 @@ def _admin_chat_id() -> int | None:
 
 ADMIN_CHAT_ID = _admin_chat_id()
 
+
+def chave_nome() -> str | None:
+    """Chave Fernet usada para cifrar o nome do usuário no banco.
+
+    Lida a cada chamada, e não uma vez na importação, para que os testes
+    possam trocá-la. Sem chave configurada o nome simplesmente não é
+    guardado: o padrão falha na direção da privacidade, não da exposição.
+
+    Gerar uma:
+        python -c "from cryptography.fernet import Fernet; \\
+                   print(Fernet.generate_key().decode())"
+    """
+    return os.getenv("NOME_KEY", "").strip() or None
+
 SIGLAS_ESTADOS = {
     "ac": "acre", "al": "alagoas", "am": "amazonas", "ap": "amapa",
     "ba": "bahia", "ce": "ceara", "df": "distrito-federal", "es": "espirito-santo",

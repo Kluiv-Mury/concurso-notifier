@@ -64,6 +64,11 @@ O bot guarda, por usuário: o `chat_id`, o primeiro nome do Telegram, os
 estados de interesse, os filtros configurados e quais concursos já foram
 enviados (para não repetir).
 
+O nome é gravado **cifrado** (Fernet, chave em `NOME_KEY`). Sem chave
+configurada, ele simplesmente não é guardado — o padrão falha na direção da
+privacidade. O `chat_id` fica legível por necessidade: é a chave de busca e o
+endereço de envio.
+
 `/deletar` apaga tudo isso, com confirmação. Bloquear o bot só interrompe as
 mensagens — os dados continuariam no banco, então este é o caminho para sair
 de verdade.
@@ -104,6 +109,17 @@ veio" (`None`) de "veio e nada foi extraído" (`[]`), e cada ciclo é
 classificado. O aviso vai para o log e, se `ADMIN_CHAT_ID` estiver
 configurado, para o Telegram.
 
+**Cifra do nome.** `nome` é o único campo pessoal que dá para cifrar sem
+quebrar nada: nunca entra em `WHERE`, `ORDER BY` nem `JOIN`. Como a chave mora
+no `.env`, ao lado do banco, isso protege os casos em que o banco vaza *sem* o
+`.env` junto — um backup sincronizado para fora, ou o arquivo indo parar onde
+não devia. Contra quem tem o servidor inteiro não protege, e nem tenta; para
+isso vale criptografia de disco no host.
+
+A conversão de nomes ainda em texto puro roda a cada boot, não como migração
+de uma vez só: a chave pode ser configurada depois, e aí os registros antigos
+precisam ser convertidos naquele momento.
+
 **Scraping educado.** O `robots.txt` da origem permite as páginas usadas. O
 User-Agent identifica o bot em vez de imitar um navegador, e há pausa entre
 estados.
@@ -113,7 +129,10 @@ estados.
 - Depende do HTML do acheconcursos.com.br; mudança de layout quebra o parser.
 - Os concursos expirados continuam no banco (são filtrados na leitura, não
   removidos). Não incomoda no volume atual, mas cresce indefinidamente.
-- Os backups ficam no mesmo disco do banco.
+- Os backups ficam no mesmo disco do banco, e backups feitos antes de
+  `NOME_KEY` ser configurada contêm os nomes em texto puro.
+- Perder a `NOME_KEY` torna os nomes já gravados ilegíveis. Não é crítico
+  (nada depende deles hoje), mas é irreversível.
 - `date('now','localtime')` usa o fuso da máquina. Num servidor em UTC, o
   corte de prazo acontece 3h mais cedo que o esperado no Brasil — defina
   `TZ=America/Sao_Paulo` no ambiente antes de subir para um host.

@@ -4,3 +4,5 @@ python-telegram-bot[job-queue]>=21.0,<23
 requests>=2.32.0,<3
 beautifulsoup4>=4.12.3,<5
 python-dotenv>=1.0.0,<2
+# Cifra o nome do usuário no banco (Fernet). Wheel pura, sem build nativo.
+cryptography>=42.0,<51
