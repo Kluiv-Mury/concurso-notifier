@@ -1,3 +1,4 @@
+import scrapping
 from scrapping import _extrair_concursos
 
 HTML = """
@@ -40,3 +41,19 @@ def test_nivel_ausente_vira_none():
 
 def test_html_sem_tabela():
     assert _extrair_concursos("<html><body>nada aqui</body></html>") == []
+
+
+def test_pagina_inacessivel_devolve_none(monkeypatch):
+    """None e [] precisam significar coisas diferentes.
+
+    None = a página não veio (rede/bloqueio). [] = veio e nada foi extraído
+    (parser quebrado). Colapsar os dois esconde a mudança de layout da origem.
+    """
+    monkeypatch.setattr(scrapping, "_buscar_html", lambda url, estado: None)
+    assert scrapping.concursos_ache_conc("bahia") is None
+
+
+def test_pagina_sem_resultados_devolve_lista_vazia(monkeypatch):
+    monkeypatch.setattr(scrapping, "_buscar_html", lambda url, estado: "<html></html>")
+    monkeypatch.setattr(scrapping.time, "sleep", lambda _: None)
+    assert scrapping.concursos_ache_conc("bahia") == []

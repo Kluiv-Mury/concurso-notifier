@@ -41,6 +41,28 @@ INTERVALO_SCRAPING = _intervalo("INTERVALO_SCRAPING_MIN", 61)
 INTERVALO_ALERTAS = _intervalo("INTERVALO_ALERTAS_MIN", 17)
 INTERVALO_BACKUP = _intervalo("INTERVALO_BACKUP_MIN", 24 * 60)
 
+def _admin_chat_id() -> int | None:
+    """Chat que recebe avisos de saúde do scraping.
+
+    Sem isso os problemas só aparecem no log, onde ninguém olha até alguém
+    reclamar. Não configurar é uma escolha legítima e silenciosa; o aviso é
+    só para o caso de estar configurado e ilegível.
+    """
+    bruto = os.getenv("ADMIN_CHAT_ID", "").strip()
+    if not bruto:
+        return None
+    try:
+        return int(bruto)
+    except ValueError:
+        logger.warning(
+            "ADMIN_CHAT_ID=%r não é um número; avisos de saúde só irão para o log.",
+            bruto,
+        )
+        return None
+
+
+ADMIN_CHAT_ID = _admin_chat_id()
+
 SIGLAS_ESTADOS = {
     "ac": "acre", "al": "alagoas", "am": "amazonas", "ap": "amapa",
     "ba": "bahia", "ce": "ceara", "df": "distrito-federal", "es": "espirito-santo",

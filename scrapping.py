@@ -107,12 +107,22 @@ def _extrair_concursos(html: str) -> List[Dict[str, Optional[str]]]:
     return concursos
 
 
-def concursos_ache_conc(estado: str) -> List[Dict[str, Optional[str]]]:
-    """Concursos abertos de um estado (slug, ex. 'rio-de-janeiro'). Bloqueante."""
+def concursos_ache_conc(estado: str) -> Optional[List[Dict[str, Optional[str]]]]:
+    """Concursos abertos de um estado (slug, ex. 'rio-de-janeiro'). Bloqueante.
+
+    Distingue dois desfechos que antes eram a mesma lista vazia, e que pedem
+    diagnósticos opostos:
+
+        None  -> a página não veio (rede, HTTP de erro, bloqueio)
+        []    -> a página veio, mas nada foi extraído dela
+
+    O segundo caso é a assinatura de mudança de layout na origem: o site
+    responde 200 normalmente e o parser não reconhece mais nada.
+    """
     slug = estado.replace(" ", "-").strip().lower()
     html = _buscar_html(BASE_URL.format(estado=slug), slug)
     if html is None:
-        return []
+        return None
 
     concursos = _extrair_concursos(html)
     logger.info("%s: %d concursos encontrados.", slug, len(concursos))
@@ -121,6 +131,6 @@ def concursos_ache_conc(estado: str) -> List[Dict[str, Optional[str]]]:
     return concursos
 
 
-async def coletar_concursos(estado: str) -> List[Dict[str, Optional[str]]]:
+async def coletar_concursos(estado: str) -> Optional[List[Dict[str, Optional[str]]]]:
     """Versão para usar dentro do bot: roda o scraping fora do event loop."""
     return await asyncio.to_thread(concursos_ache_conc, estado)
