@@ -14,6 +14,8 @@ raspados periodicamente e guardados em SQLite.
 | `/uf RJ SP` | Define os estados de interesse. Sem argumentos, mostra os atuais. |
 | `/concursos` | Envia os concursos abertos que o usuário ainda não recebeu. |
 | `/todos` | Lista todos os concursos abertos nos estados escolhidos. |
+| `/palavra professor` | Filtra por palavra no título. Sem argumentos, mostra as atuais. |
+| `/favoritos` | Lista os concursos guardados no botão ⭐. |
 | `/config` | Menu inline: salário mínimo, nível, vagas mínimas e liga/desliga notificações. |
 | `/deletar` | Apaga todos os dados do usuário. Pede confirmação. |
 | `/help` | Guia dos comandos. |
@@ -141,6 +143,13 @@ usuários, sem precisar registrar nada, mas continuam sujeitos aos filtros.
 **Lembrete de prazo.** Cada concurso era enviado uma única vez. Quem recebia
 um edital com 40 dias de prazo e deixava para depois não ouvia mais nada.
 `lembrete_em` registra o aviso já dado, para não repetir a cada ciclo.
+
+**Busca por palavra.** Os filtros eram todos quantitativos — salário, nível,
+vagas — e não havia como dizer *o que* se procura. `titulo_busca` guarda o
+título normalizado (minúsculas, sem acento) para que "medico" encontre
+"Médico" e "professor" encontre "Professores": o `LIKE` do SQLite ignora caixa
+só em ASCII, e nunca ignora acento. Várias palavras são OU — exigir todas
+quase nunca casaria, já que o título é uma manchete e não uma lista de cargos.
 
 **Fuso horário.** A data de corte do prazo é calculada em Python com
 `zoneinfo`, não com `date('now','localtime')` no SQL. O modificador `localtime`

@@ -8,6 +8,8 @@ Telegram recusar a mensagem inteira com "Can't parse entities".
 from __future__ import annotations
 
 from html import escape
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Iterable, Iterator, Optional, Sequence
 
 from config import SLUG_PARA_SIGLA
@@ -55,8 +57,25 @@ def formatar_concurso(concurso: dict, compacto: bool = False) -> str:
     return "\n".join(linhas)
 
 
+# Com botão de favoritar, cada concurso vira uma linha de teclado. Muitos
+# itens por mensagem viram uma parede de botões.
+MAX_ITENS_COM_BOTAO = 5
+
+
+def teclado_favoritar(concursos: Sequence[dict], ids: Sequence) -> InlineKeyboardMarkup:
+    """Um botão ⭐ por concurso presente na mensagem."""
+    por_id = {c.get("id"): c for c in concursos}
+    linhas = []
+    for cid in ids:
+        titulo = (por_id.get(cid, {}).get("titulo") or "concurso")[:28]
+        linhas.append([InlineKeyboardButton(f"⭐ {titulo}", callback_data=f"fav_{cid}")])
+    return InlineKeyboardMarkup(linhas)
+
+
 def agrupar_em_mensagens(
-    concursos: Sequence[dict], compacto: bool = True
+    concursos: Sequence[dict],
+    compacto: bool = True,
+    max_itens: Optional[int] = None,
 ) -> Iterator[tuple[str, list]]:
     """Junta vários concursos por mensagem, respeitando o limite do Telegram.
 
@@ -70,7 +89,9 @@ def agrupar_em_mensagens(
 
     for concurso in concursos:
         bloco = formatar_concurso(concurso, compacto=compacto)
-        if atual and tamanho + len(bloco) > LIMITE_MENSAGEM:
+        estourou = tamanho + len(bloco) > LIMITE_MENSAGEM
+        cheio = max_itens is not None and len(atual) >= max_itens
+        if atual and (estourou or cheio):
             yield "\n\n".join(atual), ids
             atual, ids, tamanho = [], [], 0
         atual.append(bloco)

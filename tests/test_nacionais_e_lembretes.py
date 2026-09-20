@@ -175,4 +175,7 @@ def test_coluna_de_lembrete_existe(banco):
             "PRAGMA table_info(user_concursos_enviados)"
         )}
     assert "lembrete_em" in colunas
-    assert banco.SCHEMA_VERSION == 3
+
+    with banco.conectar() as conn:
+        versao = conn.execute("SELECT versao FROM schema_version").fetchone()[0]
+    assert versao == banco.SCHEMA_VERSION

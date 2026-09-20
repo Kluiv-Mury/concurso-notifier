@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -35,7 +36,7 @@ from config import FUSO, SLUG_NACIONAL, chave_nome, logger
 # um banco vazio novo sem nenhum aviso.
 DB_FILE = str(Path(__file__).resolve().parent / "concursos.db")
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def hoje() -> str:
@@ -49,6 +50,19 @@ def hoje() -> str:
     última chance de se inscrever. Aqui o resultado independe do ambiente.
     """
     return datetime.now(FUSO).date().isoformat()
+
+
+def normalizar(texto: Optional[str]) -> str:
+    """Minúsculas e sem acento, para busca que ignore as duas coisas.
+
+    Sem isso, "medio" não encontraria "Médio" e "Professores" não seria
+    achado por "professor" — o `LIKE` do SQLite é insensível a caixa só
+    para ASCII, e nunca a acento.
+    """
+    if not texto:
+        return ""
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore")
+    return sem_acento.decode().lower().strip()
 
 
 def _prazo_aberto(alias: str = "") -> str:
@@ -272,6 +286,7 @@ _DDL_CONCURSOS = """
             inscricoes_ate_iso TEXT,
             salario_num        REAL,
             vagas_num          INTEGER,
+            titulo_busca       TEXT,
             atualizado_em      DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (titulo, estado)
         )
@@ -306,6 +321,22 @@ _DDL_RESTANTE = (
             FOREIGN KEY (concurso_id) REFERENCES concursos (id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS user_palavras (
+            user_id INTEGER NOT NULL,
+            palavra TEXT NOT NULL,
+            PRIMARY KEY (user_id, palavra),
+            FOREIGN KEY (user_id) REFERENCES users (chat_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS user_favoritos (
+            user_id     INTEGER NOT NULL,
+            concurso_id INTEGER NOT NULL,
+            criado_em   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, concurso_id),
+            FOREIGN KEY (user_id) REFERENCES users (chat_id) ON DELETE CASCADE,
+            FOREIGN KEY (concurso_id) REFERENCES concursos (id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_user_concurso
             ON user_concursos_enviados (user_id, concurso_id);
         CREATE INDEX IF NOT EXISTS idx_concursos_estado_prazo
@@ -325,6 +356,37 @@ def _migrar_para_v3(conn: sqlite3.Connection) -> None:
             "ALTER TABLE user_concursos_enviados ADD COLUMN lembrete_em DATETIME"
         )
         logger.info("user_concursos_enviados.lembrete_em criada.")
+
+
+def _migrar_para_v4(conn: sqlite3.Connection) -> None:
+    """Acrescenta a busca por palavra-chave e a lista de favoritos.
+
+    `titulo_busca` guarda o título normalizado (minúsculas, sem acento).
+    Comparar direto com o título original faria "professor" não encontrar
+    "Professores" com acento em volta, nem "medio" achar "Médio".
+    """
+    if "titulo_busca" not in _colunas(conn, "concursos"):
+        conn.execute("ALTER TABLE concursos ADD COLUMN titulo_busca TEXT")
+        linhas = conn.execute("SELECT id, titulo FROM concursos").fetchall()
+        conn.executemany(
+            "UPDATE concursos SET titulo_busca = ? WHERE id = ?",
+            [(normalizar(r["titulo"]), r["id"]) for r in linhas],
+        )
+        logger.info("titulo_busca criada e preenchida em %d concursos.", len(linhas))
+
+    _executar_ddl(conn, """
+        CREATE TABLE IF NOT EXISTS user_palavras (
+            user_id INTEGER NOT NULL,
+            palavra TEXT NOT NULL,
+            PRIMARY KEY (user_id, palavra)
+        );
+        CREATE TABLE IF NOT EXISTS user_favoritos (
+            user_id     INTEGER NOT NULL,
+            concurso_id INTEGER NOT NULL,
+            criado_em   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, concurso_id)
+        )
+    """)
 
 
 def _executar_ddl(conn: sqlite3.Connection, script: str) -> None:
@@ -453,6 +515,8 @@ def criar_tabelas() -> None:
                     _migrar_para_v2(conn)
                 if versao < 3:
                     _migrar_para_v3(conn)
+                if versao < 4:
+                    _migrar_para_v4(conn)
 
             if versao < SCHEMA_VERSION:
                 conn.execute("UPDATE schema_version SET versao = ?", (SCHEMA_VERSION,))
@@ -658,6 +722,7 @@ def salvar_concursos(estado: str, concursos: Iterable[dict]) -> int:
                 iso,
                 parse_salario(c.get("salario_max")),
                 parse_vagas(c.get("vagas")),
+                normalizar(titulo),
             )
         )
 
@@ -673,8 +738,8 @@ def salvar_concursos(estado: str, concursos: Iterable[dict]) -> int:
             """
             INSERT INTO concursos
                 (titulo, link, inscricoes_ate, vagas, salario_max, nivel, estado,
-                 inscricoes_ate_iso, salario_num, vagas_num)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 inscricoes_ate_iso, salario_num, vagas_num, titulo_busca)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (titulo, estado) DO UPDATE SET
                 link               = excluded.link,
                 inscricoes_ate     = excluded.inscricoes_ate,
@@ -684,6 +749,7 @@ def salvar_concursos(estado: str, concursos: Iterable[dict]) -> int:
                 inscricoes_ate_iso = excluded.inscricoes_ate_iso,
                 salario_num        = excluded.salario_num,
                 vagas_num          = excluded.vagas_num,
+                titulo_busca       = excluded.titulo_busca,
                 atualizado_em      = CURRENT_TIMESTAMP
             """,
             linhas,
@@ -703,6 +769,7 @@ def buscar_concursos(
     vagas: Optional[int] = None,
     nao_enviados_para: Optional[int] = None,
     limite: Optional[int] = None,
+    palavras: Optional[Sequence[str]] = None,
 ) -> list[dict]:
     """Concursos com inscrição aberta nas UFs do usuário, aplicando os filtros.
 
@@ -735,6 +802,16 @@ def buscar_concursos(
         # passavam em qualquer mínimo porque o texto '-' > inteiro no SQLite.
         condicoes.append("c.vagas_num IS NOT NULL AND c.vagas_num >= ?")
         params.append(vagas)
+
+    if palavras:
+        # Qualquer palavra basta (OU). Exigir todas quase nunca casaria: o
+        # título é uma manchete, não uma lista de cargos.
+        termos = [normalizar(p) for p in palavras if normalizar(p)]
+        if termos:
+            condicoes.append(
+                "(" + " OR ".join("c.titulo_busca LIKE ?" for _ in termos) + ")"
+            )
+            params.extend(f"%{t}%" for t in termos)
 
     if nao_enviados_para is not None:
         condicoes.append(
@@ -820,6 +897,70 @@ def fazer_backup(manter: int = MAX_BACKUPS) -> Path:
         destino.name, destino.stat().st_size / 1024, removidos,
     )
     return destino
+
+
+def atualizar_palavras_usuario(user_id: int, palavras: Sequence[str]) -> list[str]:
+    """Substitui as palavras-chave do usuário. Devolve as que ficaram gravadas."""
+    normalizadas = list(dict.fromkeys(filter(None, (normalizar(p) for p in palavras))))
+
+    with conectar() as conn:
+        conn.execute("DELETE FROM user_palavras WHERE user_id = ?", (user_id,))
+        conn.executemany(
+            "INSERT OR IGNORE INTO user_palavras (user_id, palavra) VALUES (?, ?)",
+            [(user_id, p) for p in normalizadas],
+        )
+    return normalizadas
+
+
+def obter_palavras_usuario(user_id: int) -> list[str]:
+    with conectar() as conn:
+        linhas = conn.execute(
+            "SELECT palavra FROM user_palavras WHERE user_id = ? ORDER BY palavra",
+            (user_id,),
+        ).fetchall()
+    return [linha["palavra"] for linha in linhas]
+
+
+def favoritar(user_id: int, concurso_id: int) -> bool:
+    """Alterna o favorito. True se passou a estar favoritado, False se saiu."""
+    with conectar() as conn:
+        ja = conn.execute(
+            "SELECT 1 FROM user_favoritos WHERE user_id = ? AND concurso_id = ?",
+            (user_id, concurso_id),
+        ).fetchone()
+
+        if ja:
+            conn.execute(
+                "DELETE FROM user_favoritos WHERE user_id = ? AND concurso_id = ?",
+                (user_id, concurso_id),
+            )
+            return False
+
+        conn.execute(
+            "INSERT INTO user_favoritos (user_id, concurso_id) VALUES (?, ?)",
+            (user_id, concurso_id),
+        )
+        return True
+
+
+def listar_favoritos(user_id: int, incluir_encerrados: bool = False) -> list[dict]:
+    """Favoritos do usuário, os com prazo aberto primeiro."""
+    condicao = "" if incluir_encerrados else f" AND {_prazo_aberto('c')}"
+    params: list = [user_id] + ([] if incluir_encerrados else [hoje()])
+
+    with conectar() as conn:
+        linhas = conn.execute(
+            f"""
+            SELECT c.id, c.titulo, c.link, c.inscricoes_ate, c.vagas,
+                   c.salario_max, c.nivel, c.estado, c.inscricoes_ate_iso
+              FROM user_favoritos f
+              JOIN concursos c ON c.id = f.concurso_id
+             WHERE f.user_id = ?{condicao}
+             ORDER BY c.inscricoes_ate_iso ASC
+            """,
+            params,
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
 
 
 def buscar_encerrando(user_id: int, dias: int) -> list[dict]:

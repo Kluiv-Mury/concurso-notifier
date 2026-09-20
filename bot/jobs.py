@@ -22,6 +22,7 @@ from db import (
     marcar_enviados,
     marcar_lembretes,
     obter_filtros,
+    obter_palavras_usuario,
     obter_ufs_usuario,
     salvar_concursos,
 )
@@ -214,6 +215,7 @@ async def _notificar_usuario(
         return 0
 
     salario, nivel, vagas = await asyncio.to_thread(obter_filtros, user_id)
+    palavras = await asyncio.to_thread(obter_palavras_usuario, user_id)
     concursos = await asyncio.to_thread(
         buscar_concursos,
         ufs,
@@ -222,6 +224,7 @@ async def _notificar_usuario(
         vagas,
         user_id,              # exclui o que já foi enviado, na própria query
         MAX_ALERTAS_POR_CICLO,
+        palavras,
     )
     if not concursos:
         return 0

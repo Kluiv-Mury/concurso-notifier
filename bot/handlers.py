@@ -7,13 +7,23 @@ import asyncio
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from bot.formatacao import agrupar_em_mensagens, formatar_ufs
+from bot.formatacao import (
+    MAX_ITENS_COM_BOTAO,
+    agrupar_em_mensagens,
+    formatar_ufs,
+    teclado_favoritar,
+)
 from config import SIGLAS_ESTADOS, logger
 from db import (
     adicionar_usuario,
     atualizar_uf_usuario,
+    atualizar_palavras_usuario,
     buscar_concursos,
+    favoritar,
+    listar_favoritos,
     marcar_enviados,
+    normalizar,
+    obter_palavras_usuario,
     obter_filtros,
     obter_ufs_usuario,
     remover_usuario,
@@ -80,7 +90,8 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "histórico. Pede confirmação antes.\n\n"
 
         "<b>Automático:</b> a cada hora eu atualizo a base e te aviso dos "
-        "concursos novos que combinam com seus estados e filtros."
+        "concursos novos que combinam com seus estados e filtros. Quando o "
+        "prazo de algum que você recebeu estiver acabando, eu lembro."
     )
 
     await update.effective_message.reply_text(mensagem, parse_mode="HTML")
@@ -138,6 +149,7 @@ async def _listar(update: Update, apenas_novos: bool) -> None:
         return
 
     salario, nivel, vagas = await asyncio.to_thread(obter_filtros, user_id)
+    palavras = await asyncio.to_thread(obter_palavras_usuario, user_id)
     concursos = await asyncio.to_thread(
         buscar_concursos,
         ufs,
@@ -145,6 +157,8 @@ async def _listar(update: Update, apenas_novos: bool) -> None:
         nivel,
         vagas,
         user_id if apenas_novos else None,
+        None,
+        palavras,
     )
 
     if not concursos:
@@ -165,8 +179,15 @@ async def _listar(update: Update, apenas_novos: bool) -> None:
     )
 
     enviados: list[int] = []
-    for texto, ids in agrupar_em_mensagens(concursos, compacto=not apenas_novos):
-        await mensagem.reply_text(texto, parse_mode="HTML")
+    grupos = agrupar_em_mensagens(
+        concursos,
+        compacto=not apenas_novos,
+        # Botão só nas novidades: /todos é um despejo e viraria parede de botões.
+        max_itens=MAX_ITENS_COM_BOTAO if apenas_novos else None,
+    )
+    for texto, ids in grupos:
+        teclado = teclado_favoritar(concursos, ids) if apenas_novos else None
+        await mensagem.reply_text(texto, parse_mode="HTML", reply_markup=teclado)
         enviados.extend(ids)
         await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
 
@@ -184,6 +205,109 @@ async def concursos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _listar(update, apenas_novos=False)
+
+
+# --------------------------------------------------------------------------- #
+# Palavras-chave
+# --------------------------------------------------------------------------- #
+
+async def palavra(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Define ou mostra as palavras que o título precisa conter.
+
+    Os filtros existentes eram todos quantitativos — salário, nível, vagas —
+    e não havia como dizer *o que* se procura. Quem queria concurso de
+    professor recebia tudo do estado e filtrava no olho.
+    """
+    user_id = await _garantir_usuario(update)
+    mensagem = update.effective_message
+
+    if not context.args:
+        palavras = await asyncio.to_thread(obter_palavras_usuario, user_id)
+        if not palavras:
+            await mensagem.reply_text(
+                "🔍 Você não filtra por palavra: recebe todos os concursos "
+                "dos seus estados.\n\n"
+                "Para filtrar: <code>/palavra professor medico</code>\n"
+                "Basta uma das palavras aparecer no título.",
+                parse_mode="HTML",
+            )
+        else:
+            await mensagem.reply_text(
+                f"🔍 Suas palavras-chave:\n• {', '.join(palavras)}\n\n"
+                "Para limpar: <code>/palavra limpar</code>",
+                parse_mode="HTML",
+            )
+        return
+
+    if len(context.args) == 1 and normalizar(context.args[0]) in ("limpar", "remover"):
+        await asyncio.to_thread(atualizar_palavras_usuario, user_id, [])
+        await mensagem.reply_text(
+            "🔍 Filtro de palavras removido. Você volta a receber todos os "
+            "concursos dos seus estados."
+        )
+        return
+
+    gravadas = await asyncio.to_thread(
+        atualizar_palavras_usuario, user_id, context.args
+    )
+    if not gravadas:
+        await mensagem.reply_text("❌ Não entendi nenhuma palavra válida.")
+        return
+
+    await mensagem.reply_text(
+        f"🔍 Agora você só recebe concursos cujo título contenha:\n"
+        f"• {', '.join(gravadas)}"
+    )
+    logger.info("Usuário %s definiu palavras: %s", user_id, gravadas)
+
+
+# --------------------------------------------------------------------------- #
+# Favoritos
+# --------------------------------------------------------------------------- #
+
+async def favoritos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = await _garantir_usuario(update)
+    mensagem = update.effective_message
+
+    lista = await asyncio.to_thread(listar_favoritos, user_id)
+    if not lista:
+        await mensagem.reply_text(
+            "⭐ Você ainda não favoritou nenhum concurso.\n\n"
+            "Use o botão ⭐ abaixo dos concursos em /concursos para guardar "
+            "os que te interessam."
+        )
+        return
+
+    await mensagem.reply_text(
+        f"⭐ <b>{len(lista)} concurso(s) favoritado(s)</b>, do que encerra "
+        "mais cedo para o mais tarde:",
+        parse_mode="HTML",
+    )
+
+    for texto, ids in agrupar_em_mensagens(lista, compacto=False, max_itens=5):
+        await mensagem.reply_text(
+            texto, parse_mode="HTML", reply_markup=teclado_favoritar(lista, ids)
+        )
+        await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
+
+
+async def callback_favoritar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    try:
+        concurso_id = int(query.data.removeprefix("fav_"))
+    except ValueError:
+        await query.answer("Não consegui identificar esse concurso.")
+        return
+
+    virou_favorito = await asyncio.to_thread(favoritar, user_id, concurso_id)
+    # A resposta do callback é o retorno visual: a mensagem não muda.
+    await query.answer(
+        "⭐ Adicionado aos favoritos. Veja em /favoritos"
+        if virou_favorito
+        else "Removido dos favoritos."
+    )
 
 
 # --------------------------------------------------------------------------- #
