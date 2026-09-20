@@ -1,24 +1,25 @@
+# Segredos
 .env
-notifier/
 
+# Ambiente virtual
+notifier/
+.venv/
+venv/
+
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 
-*.log
-
+# Banco e logs (dados de runtime)
 *.db
+*.db.bak-*
 *.sqlite
 *.sqlite3
-*.json
+*.log
 
+# Editores / SO
 .vscode/
 .idea/
-
 .DS_Store
-
-*.py
-!bot/*.py
-!db.py
-!scrapping.py
-!config.py
-!main.py
+Thumbs.db
