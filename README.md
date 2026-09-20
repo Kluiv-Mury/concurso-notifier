@@ -120,6 +120,14 @@ A conversão de nomes ainda em texto puro roda a cada boot, não como migração
 de uma vez só: a chave pode ser configurada depois, e aí os registros antigos
 precisam ser convertidos naquele momento.
 
+**Fuso horário.** A data de corte do prazo é calculada em Python com
+`zoneinfo`, não com `date('now','localtime')` no SQL. O modificador `localtime`
+do SQLite converte pelo fuso do sistema operacional, e num servidor em UTC —
+o padrão de praticamente todo VPS — ele não converte nada: das 21h às 23h59 de
+Brasília o banco acharia que já é amanhã, e todo concurso encerrando naquele
+dia sumiria da lista, justo na última chance de se inscrever. Assim o
+resultado independe do ambiente. Configurável em `TIMEZONE`.
+
 **Scraping educado.** O `robots.txt` da origem permite as páginas usadas. O
 User-Agent identifica o bot em vez de imitar um navegador, e há pausa entre
 estados.
@@ -133,7 +141,4 @@ estados.
   `NOME_KEY` ser configurada contêm os nomes em texto puro.
 - Perder a `NOME_KEY` torna os nomes já gravados ilegíveis. Não é crítico
   (nada depende deles hoje), mas é irreversível.
-- `date('now','localtime')` usa o fuso da máquina. Num servidor em UTC, o
-  corte de prazo acontece 3h mais cedo que o esperado no Brasil — defina
-  `TZ=America/Sao_Paulo` no ambiente antes de subir para um host.
 - Sem CI: os testes só rodam se alguém lembrar.

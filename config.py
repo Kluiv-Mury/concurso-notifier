@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
@@ -62,6 +64,33 @@ def _admin_chat_id() -> int | None:
 
 
 ADMIN_CHAT_ID = _admin_chat_id()
+
+
+def _fuso() -> tzinfo:
+    """Fuso usado para decidir que dia é hoje.
+
+    Fixado no código em vez de herdado do sistema: o SQLite resolve
+    `date('now','localtime')` pela libc, que lê o TZ do SO. Num servidor em
+    UTC — o padrão de praticamente todo VPS — o modificador vira no-op, e das
+    21h às 23h59 de Brasília o banco já acha que é amanhã. Nessas 3 horas
+    todo concurso que encerra hoje sumiria da lista, justo na última chance
+    de se inscrever.
+    """
+    nome = os.getenv("TIMEZONE", "").strip() or "America/Sao_Paulo"
+    try:
+        return ZoneInfo(nome)
+    except (ZoneInfoNotFoundError, ValueError):
+        # Sem tzdata (comum em imagem Docker slim) o ZoneInfo não resolve.
+        # Degradar para o offset fixo do Brasil é melhor que derrubar o bot.
+        logger.error(
+            "Fuso %r indisponível (falta o pacote tzdata?); usando UTC-3 fixo. "
+            "Sem horário de verão isso equivale a America/Sao_Paulo.",
+            nome,
+        )
+        return timezone(timedelta(hours=-3))
+
+
+FUSO = _fuso()
 
 
 def chave_nome() -> str | None:

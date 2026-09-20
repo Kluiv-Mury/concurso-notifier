@@ -6,3 +6,6 @@ beautifulsoup4>=4.12.3,<5
 python-dotenv>=1.0.0,<2
 # Cifra o nome do usuário no banco (Fernet). Wheel pura, sem build nativo.
 cryptography>=42.0,<51
+# Base IANA de fusos para o zoneinfo. O Windows não traz uma, e imagem
+# Docker slim também não. Vinha por acaso via APScheduler; agora é explícito.
+tzdata>=2024.1

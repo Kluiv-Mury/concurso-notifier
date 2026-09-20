@@ -29,7 +29,7 @@ from typing import Iterable, Iterator, Optional, Sequence
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from config import chave_nome, logger
+from config import FUSO, chave_nome, logger
 
 # Caminho absoluto: relativo ao CWD, rodar o bot de outra pasta criaria
 # um banco vazio novo sem nenhum aviso.
@@ -38,10 +38,27 @@ DB_FILE = str(Path(__file__).resolve().parent / "concursos.db")
 SCHEMA_VERSION = 2
 
 
+def hoje() -> str:
+    """Data de hoje no fuso do bot, em YYYY-MM-DD.
+
+    Calculada em Python, e não com `date('now','localtime')` no SQL: o
+    modificador `localtime` do SQLite converte pelo fuso do sistema
+    operacional, e num servidor em UTC — o padrão de praticamente todo VPS —
+    ele não converte nada. Das 21h às 23h59 de Brasília o banco já acharia
+    que é amanhã, e todo concurso encerrando hoje sumiria da lista, justo na
+    última chance de se inscrever. Aqui o resultado independe do ambiente.
+    """
+    return datetime.now(FUSO).date().isoformat()
+
+
 def _prazo_aberto(alias: str = "") -> str:
-    """Condição SQL: concurso só interessa enquanto a inscrição estiver aberta."""
+    """Condição SQL: concurso só interessa enquanto a inscrição estiver aberta.
+
+    A data de corte entra como parâmetro — quem monta a query precisa passar
+    `hoje()` na posição correspondente.
+    """
     coluna = f"{alias}.inscricoes_ate_iso" if alias else "inscricoes_ate_iso"
-    return f"{coluna} IS NOT NULL AND {coluna} >= date('now', 'localtime')"
+    return f"{coluna} IS NOT NULL AND {coluna} >= ?"
 
 
 # --------------------------------------------------------------------------- #
@@ -680,7 +697,8 @@ def buscar_concursos(
 
     placeholders = ",".join("?" for _ in ufs)
     condicoes = [f"c.estado IN ({placeholders})", _prazo_aberto("c")]
-    params: list = list(ufs)
+    # A ordem dos parâmetros acompanha a ordem das condições acima.
+    params: list = [*ufs, hoje()]
 
     if salario is not None:
         condicoes.append("c.salario_num IS NOT NULL AND c.salario_num >= ?")
