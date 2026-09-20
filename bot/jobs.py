@@ -10,14 +10,17 @@ from typing import Optional
 from telegram.error import Forbidden, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
-from bot.formatacao import agrupar_em_mensagens
-from config import ADMIN_CHAT_ID, SIGLAS_ESTADOS, logger
+from bot.formatacao import agrupar_em_mensagens, formatar_lembrete
+from config import ADMIN_CHAT_ID, SLUGS_COLETA, logger
 from db import (
     atualizar_notificacoes_usuario,
     buscar_concursos,
+    buscar_encerrando,
+    dias_restantes,
     fazer_backup,
     listar_usuarios,
     marcar_enviados,
+    marcar_lembretes,
     obter_filtros,
     obter_ufs_usuario,
     salvar_concursos,
@@ -35,6 +38,10 @@ PAUSA_ENTRE_MENSAGENS = 1.0
 # considerado saudável. Estado pequeno sem concurso aberto é normal; a
 # maioria vazia não é.
 LIMIAR_ESTADOS_SAUDAVEIS = 0.5
+
+# Janela do lembrete de prazo. Curta o bastante para ser urgente, longa o
+# bastante para ainda dar tempo de reunir documento e pagar a taxa.
+DIAS_PARA_LEMBRAR = 3
 
 # Intervalo mínimo entre dois avisos ao admin (6h).
 INTERVALO_AVISO_ADMIN = 6 * 60 * 60
@@ -128,7 +135,7 @@ async def _avisar_admin(context: ContextTypes.DEFAULT_TYPE, texto: str) -> None:
 
 
 async def atualizar_base_concursos(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Varre os 27 estados, grava o resultado e checa a saúde do ciclo.
+    """Varre os 27 estados mais a listagem nacional, grava e checa a saúde.
 
     `coletar_concursos` roda numa thread: a varredura leva minutos e, dentro
     do event loop, o bot pararia de responder a comandos nesse intervalo.
@@ -136,7 +143,7 @@ async def atualizar_base_concursos(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Iniciando scraping global...")
     resumo = ResumoColeta()
 
-    for estado in SIGLAS_ESTADOS.values():
+    for estado in SLUGS_COLETA:
         try:
             concursos = await coletar_concursos(estado)
         except Exception:
@@ -233,6 +240,43 @@ async def _notificar_usuario(
         await asyncio.to_thread(marcar_enviados, user_id, enviados)
 
     return len(enviados)
+
+
+async def lembrar_prazos(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Avisa quem recebeu um concurso que o prazo dele está acabando.
+
+    O bot mandava cada concurso uma vez só. Quem recebia um edital com 40
+    dias de prazo e deixava para depois não ouvia mais nada — o prazo fechava
+    em silêncio. Como o produto existe para a pessoa não perder inscrição,
+    era o buraco mais central que restava.
+    """
+    usuarios = await asyncio.to_thread(listar_usuarios)
+    total = 0
+
+    for user_id in usuarios:
+        try:
+            encerrando = await asyncio.to_thread(
+                buscar_encerrando, user_id, DIAS_PARA_LEMBRAR
+            )
+            if not encerrando:
+                continue
+
+            blocos = [
+                formatar_lembrete(c, dias_restantes(c.get("inscricoes_ate_iso")))
+                for c in encerrando
+            ]
+            texto = "⏰ <b>Inscrições encerrando</b>\n\n" + "\n\n".join(blocos)
+
+            if await _enviar(context, user_id, texto):
+                await asyncio.to_thread(
+                    marcar_lembretes, user_id, [c["id"] for c in encerrando]
+                )
+                total += len(encerrando)
+                await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
+        except Exception:
+            logger.exception("Falha ao lembrar prazos de %s.", user_id)
+
+    logger.info("Lembretes de prazo enviados: %d concursos.", total)
 
 
 async def buscar_e_enviar_concursos(context: ContextTypes.DEFAULT_TYPE) -> None:

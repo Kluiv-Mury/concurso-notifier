@@ -18,8 +18,9 @@ raspados periodicamente e guardados em SQLite.
 | `/deletar` | Apaga todos os dados do usuário. Pede confirmação. |
 | `/help` | Guia dos comandos. |
 
-Em paralelo, duas tarefas rodam sozinhas: uma atualiza a base de concursos
-(padrão: a cada 61 min) e outra envia os alertas pendentes (a cada 17 min).
+Em paralelo, quatro tarefas rodam sozinhas: atualizar a base (a cada 61 min),
+enviar os alertas pendentes (17 min), avisar de prazo encerrando (12 h) e
+fazer backup do banco (24 h).
 
 ## Como rodar
 
@@ -129,6 +130,17 @@ isso vale criptografia de disco no host.
 A conversão de nomes ainda em texto puro roda a cada boot, não como migração
 de uma vez só: a chave pode ser configurada depois, e aí os registros antigos
 precisam ser convertidos naquele momento.
+
+**Concursos nacionais.** A origem publica os de alcance nacional numa
+listagem própria (`/concursos-brasil`), fora das 27 estaduais, e eles não se
+repetem nas páginas de estado. Como são justamente os federais — em geral os
+mais bem pagos — ignorá-la deixava o melhor de fora: em 20/09/2026 havia um
+TRF-5 de R$ 37.765,55 aberto e invisível. Eles entram na busca de todos os
+usuários, sem precisar registrar nada, mas continuam sujeitos aos filtros.
+
+**Lembrete de prazo.** Cada concurso era enviado uma única vez. Quem recebia
+um edital com 40 dias de prazo e deixava para depois não ouvia mais nada.
+`lembrete_em` registra o aviso já dado, para não repetir a cada ciclo.
 
 **Fuso horário.** A data de corte do prazo é calculada em Python com
 `zoneinfo`, não com `date('now','localtime')` no SQL. O modificador `localtime`

@@ -23,11 +23,13 @@ from bot.jobs import (
     atualizar_base_concursos,
     backup_do_banco,
     buscar_e_enviar_concursos,
+    lembrar_prazos,
 )
 from bot.menu_config import callback_config, config
 from config import (
     INTERVALO_ALERTAS,
     INTERVALO_BACKUP,
+    INTERVALO_LEMBRETES,
     INTERVALO_SCRAPING,
     TELEGRAM_TOKEN,
     logger,
@@ -69,6 +71,8 @@ def configurar_agendador(application: Application) -> None:
     fila.run_repeating(buscar_e_enviar_concursos, interval=INTERVALO_ALERTAS, first=200)
     # `first=5`: uma cópia logo no boot, antes de o scraping tocar no banco.
     fila.run_repeating(backup_do_banco, interval=INTERVALO_BACKUP, first=5)
+    # Depois do primeiro ciclo de alertas, para não competir com ele.
+    fila.run_repeating(lembrar_prazos, interval=INTERVALO_LEMBRETES, first=600)
 
 
 def main() -> None:

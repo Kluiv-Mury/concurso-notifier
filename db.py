@@ -23,19 +23,19 @@ from __future__ import annotations
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Iterator, Optional, Sequence
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from config import FUSO, chave_nome, logger
+from config import FUSO, SLUG_NACIONAL, chave_nome, logger
 
 # Caminho absoluto: relativo ao CWD, rodar o bot de outra pasta criaria
 # um banco vazio novo sem nenhum aviso.
 DB_FILE = str(Path(__file__).resolve().parent / "concursos.db")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def hoje() -> str:
@@ -300,6 +300,7 @@ _DDL_RESTANTE = (
             user_id     INTEGER NOT NULL,
             concurso_id INTEGER NOT NULL,
             enviado_em  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            lembrete_em DATETIME,
             PRIMARY KEY (user_id, concurso_id),
             FOREIGN KEY (user_id) REFERENCES users (chat_id) ON DELETE CASCADE,
             FOREIGN KEY (concurso_id) REFERENCES concursos (id) ON DELETE CASCADE
@@ -311,6 +312,19 @@ _DDL_RESTANTE = (
             ON concursos (estado, inscricoes_ate_iso);
         """
     )
+
+
+def _migrar_para_v3(conn: sqlite3.Connection) -> None:
+    """Adiciona `lembrete_em`, que registra o aviso de prazo já enviado.
+
+    Sem essa coluna o bot mandaria o mesmo lembrete a cada ciclo enquanto o
+    concurso estivesse na janela de encerramento.
+    """
+    if "lembrete_em" not in _colunas(conn, "user_concursos_enviados"):
+        conn.execute(
+            "ALTER TABLE user_concursos_enviados ADD COLUMN lembrete_em DATETIME"
+        )
+        logger.info("user_concursos_enviados.lembrete_em criada.")
 
 
 def _executar_ddl(conn: sqlite3.Connection, script: str) -> None:
@@ -432,9 +446,13 @@ def criar_tabelas() -> None:
             versao = _versao_esquema(conn)
 
             if versao == 0:
+                # Banco novo já nasce no esquema atual.
                 _criar_esquema_base(conn)
-            elif versao < 2:
-                _migrar_para_v2(conn)
+            else:
+                if versao < 2:
+                    _migrar_para_v2(conn)
+                if versao < 3:
+                    _migrar_para_v3(conn)
 
             if versao < SCHEMA_VERSION:
                 conn.execute("UPDATE schema_version SET versao = ?", (SCHEMA_VERSION,))
@@ -695,10 +713,14 @@ def buscar_concursos(
     if not ufs:
         return []
 
-    placeholders = ",".join("?" for _ in ufs)
+    # Concurso de alcance nacional vale para qualquer usuário, esteja em que
+    # estado estiver — entra na busca de todo mundo, sem precisar registrar.
+    alvos = [*ufs, SLUG_NACIONAL]
+
+    placeholders = ",".join("?" for _ in alvos)
     condicoes = [f"c.estado IN ({placeholders})", _prazo_aberto("c")]
     # A ordem dos parâmetros acompanha a ordem das condições acima.
-    params: list = [*ufs, hoje()]
+    params: list = [*alvos, hoje()]
 
     if salario is not None:
         condicoes.append("c.salario_num IS NOT NULL AND c.salario_num >= ?")
@@ -798,6 +820,61 @@ def fazer_backup(manter: int = MAX_BACKUPS) -> Path:
         destino.name, destino.stat().st_size / 1024, removidos,
     )
     return destino
+
+
+def buscar_encerrando(user_id: int, dias: int) -> list[dict]:
+    """Concursos já enviados ao usuário cujo prazo termina nos próximos `dias`.
+
+    O bot avisava de cada concurso uma única vez. Quem recebia um edital com
+    40 dias de prazo e deixava para depois não era lembrado de novo — o prazo
+    fechava em silêncio. Como o valor do produto é justamente não perder
+    inscrição, faltava o empurrão final.
+
+    Só entram concursos que a pessoa já recebeu: os novos que encerram logo
+    já chegam pelo alerta normal, com a data à vista.
+    """
+    limite = (datetime.now(FUSO) + timedelta(days=dias)).date().isoformat()
+
+    with conectar() as conn:
+        linhas = conn.execute(
+            f"""
+            SELECT c.id, c.titulo, c.link, c.inscricoes_ate, c.vagas,
+                   c.salario_max, c.nivel, c.estado
+              FROM user_concursos_enviados e
+              JOIN concursos c ON c.id = e.concurso_id
+             WHERE e.user_id = ?
+               AND e.lembrete_em IS NULL
+               AND {_prazo_aberto("c")}
+               AND c.inscricoes_ate_iso <= ?
+             ORDER BY c.inscricoes_ate_iso ASC
+            """,
+            (user_id, hoje(), limite),
+        ).fetchall()
+
+    return [dict(linha) for linha in linhas]
+
+
+def marcar_lembretes(user_id: int, concurso_ids: Sequence[int]) -> None:
+    """Registra o aviso de prazo, para não repetir a cada ciclo."""
+    if not concurso_ids:
+        return
+    with conectar() as conn:
+        conn.executemany(
+            "UPDATE user_concursos_enviados SET lembrete_em = CURRENT_TIMESTAMP"
+            " WHERE user_id = ? AND concurso_id = ?",
+            [(user_id, cid) for cid in concurso_ids],
+        )
+
+
+def dias_restantes(inscricoes_ate_iso: Optional[str]) -> Optional[int]:
+    """Quantos dias faltam até o prazo. 0 significa "encerra hoje"."""
+    if not inscricoes_ate_iso:
+        return None
+    try:
+        prazo = datetime.fromisoformat(inscricoes_ate_iso).date()
+    except ValueError:
+        return None
+    return (prazo - datetime.now(FUSO).date()).days
 
 
 def marcar_enviados(user_id: int, concurso_ids: Sequence[int]) -> None:

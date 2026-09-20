@@ -8,7 +8,7 @@ Telegram recusar a mensagem inteira com "Can't parse entities".
 from __future__ import annotations
 
 from html import escape
-from typing import Iterable, Iterator, Sequence
+from typing import Iterable, Iterator, Optional, Sequence
 
 from config import SLUG_PARA_SIGLA
 
@@ -79,6 +79,31 @@ def agrupar_em_mensagens(
 
     if atual:
         yield "\n\n".join(atual), ids
+
+
+def formatar_lembrete(concurso: dict, dias: Optional[int]) -> str:
+    """Bloco do aviso de prazo, com a urgência à frente do resto."""
+    if dias is None:
+        prazo = f"encerra em {_campo(concurso.get('inscricoes_ate'), '—')}"
+    elif dias <= 0:
+        prazo = "<b>encerra HOJE</b>"
+    elif dias == 1:
+        prazo = "<b>encerra AMANHÃ</b>"
+    else:
+        prazo = f"<b>faltam {dias} dias</b>"
+
+    titulo = _campo(concurso.get("titulo"), "Concurso")
+    uf = SLUG_PARA_SIGLA.get(concurso.get("estado", ""), "")
+    link = escape(concurso.get("link") or "")
+
+    linhas = [f"⏰ {prazo} — <b>{titulo}</b>" + (f" <i>({uf})</i>" if uf else "")]
+    linhas.append(
+        f"📅 até {_campo(concurso.get('inscricoes_ate'), '—')}"
+        f" | 💵 {_campo(concurso.get('salario_max'), '—')}"
+    )
+    if link:
+        linhas.append(f"🔗 {link}")
+    return "\n".join(linhas)
 
 
 def formatar_ufs(ufs: Iterable[str]) -> str:

@@ -42,6 +42,7 @@ def _intervalo(nome: str, padrao_minutos: int) -> int:
 INTERVALO_SCRAPING = _intervalo("INTERVALO_SCRAPING_MIN", 61)
 INTERVALO_ALERTAS = _intervalo("INTERVALO_ALERTAS_MIN", 17)
 INTERVALO_BACKUP = _intervalo("INTERVALO_BACKUP_MIN", 24 * 60)
+INTERVALO_LEMBRETES = _intervalo("INTERVALO_LEMBRETES_MIN", 12 * 60)
 
 def _admin_chat_id() -> int | None:
     """Chat que recebe avisos de saúde do scraping.
@@ -116,4 +117,15 @@ SIGLAS_ESTADOS = {
     "se": "sergipe", "sp": "sao-paulo", "to": "tocantins",
 }
 
+# Concursos de alcance nacional (federais, estatais) ficam numa listagem
+# própria da origem, fora das 27 estaduais. Sem visitá-la, justamente os mais
+# bem pagos ficam invisíveis: em 20/09/2026 havia um TRF-5 de R$ 37.765,55
+# aberto que não aparecia em nenhuma página de estado.
+SLUG_NACIONAL = "brasil"
+
+# O que o scraping percorre. Separado de SIGLAS_ESTADOS porque "brasil" não é
+# um estado e não deve virar opção de /uf.
+SLUGS_COLETA = (*SIGLAS_ESTADOS.values(), SLUG_NACIONAL)
+
 SLUG_PARA_SIGLA = {slug: sigla.upper() for sigla, slug in SIGLAS_ESTADOS.items()}
+SLUG_PARA_SIGLA[SLUG_NACIONAL] = "Nacional"
