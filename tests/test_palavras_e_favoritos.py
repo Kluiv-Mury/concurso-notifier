@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import pytest
 
 import db
+from conftest import hoje_do_bot
 from bot.formatacao import teclado_favorito
 
 
@@ -11,7 +12,7 @@ def _concurso(titulo, dias=30):
     return {
         "titulo": titulo,
         "link": f"https://exemplo/{titulo[:10]}",
-        "inscricoes_ate": (date.today() + timedelta(days=dias)).strftime("%d/%m/%Y"),
+        "inscricoes_ate": (hoje_do_bot() + timedelta(days=dias)).strftime("%d/%m/%Y"),
         "vagas": "10",
         "salario_max": "R$ 5.000,00",
         "nivel": "Superior",

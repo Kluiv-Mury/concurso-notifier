@@ -4,11 +4,12 @@ from datetime import date, timedelta
 import pytest
 
 import db
+from conftest import hoje_do_bot
 
 
 def _data(dias: int) -> str:
     """Data em dd/mm/aaaa deslocada de hoje."""
-    return (date.today() + timedelta(days=dias)).strftime("%d/%m/%Y")
+    return (hoje_do_bot() + timedelta(days=dias)).strftime("%d/%m/%Y")
 
 
 def _concurso(titulo, dias=30, salario="R$ 5.000,00", vagas="10", nivel="Superior"):

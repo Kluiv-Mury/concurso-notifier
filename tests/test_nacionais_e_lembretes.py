@@ -3,6 +3,7 @@ from datetime import date, timedelta
 import pytest
 
 import db
+from conftest import hoje_do_bot
 from bot.formatacao import formatar_lembrete
 from bot.jobs import DIAS_PARA_LEMBRAR
 from config import SIGLAS_ESTADOS, SLUGS_COLETA, SLUG_NACIONAL, SLUG_PARA_SIGLA
@@ -12,7 +13,7 @@ def _concurso(titulo, dias, **extra):
     base = {
         "titulo": titulo,
         "link": f"https://exemplo/{titulo}",
-        "inscricoes_ate": (date.today() + timedelta(days=dias)).strftime("%d/%m/%Y"),
+        "inscricoes_ate": (hoje_do_bot() + timedelta(days=dias)).strftime("%d/%m/%Y"),
         "vagas": "10",
         "salario_max": "R$ 5.000,00",
         "nivel": "Superior",
@@ -157,7 +158,7 @@ def test_lembrete_escapa_html():
 
 
 def test_dias_restantes(banco):
-    hoje = date.today()
+    hoje = hoje_do_bot()
     assert banco.dias_restantes(hoje.isoformat()) == 0
     assert banco.dias_restantes((hoje + timedelta(days=5)).isoformat()) == 5
     assert banco.dias_restantes((hoje - timedelta(days=1)).isoformat()) == -1

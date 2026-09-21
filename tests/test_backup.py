@@ -3,13 +3,14 @@ from datetime import date, timedelta
 import pytest
 
 import db
+from conftest import hoje_do_bot
 
 
 def _concurso(titulo):
     return {
         "titulo": titulo,
         "link": f"https://exemplo/{titulo}",
-        "inscricoes_ate": (date.today() + timedelta(days=30)).strftime("%d/%m/%Y"),
+        "inscricoes_ate": (hoje_do_bot() + timedelta(days=30)).strftime("%d/%m/%Y"),
         "vagas": "10",
         "salario_max": "R$ 5.000,00",
         "nivel": "Superior",
