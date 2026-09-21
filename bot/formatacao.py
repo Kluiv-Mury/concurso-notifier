@@ -9,13 +9,11 @@ from __future__ import annotations
 
 from html import escape
 
+from typing import Iterable, Optional
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from typing import Iterable, Iterator, Optional, Sequence
 
 from config import SLUG_PARA_SIGLA
-
-# Limite da API do Telegram por mensagem; deixamos folga para o cabeçalho.
-LIMITE_MENSAGEM = 3500
 
 
 def _campo(valor, padrao: str = "não informado") -> str:
@@ -57,19 +55,23 @@ def formatar_concurso(concurso: dict, compacto: bool = False) -> str:
     return "\n".join(linhas)
 
 
-# Com botão de favoritar, cada concurso vira uma linha de teclado. Muitos
-# itens por mensagem viram uma parede de botões.
-MAX_ITENS_COM_BOTAO = 5
 
+def teclado_favorito(concurso_id, favoritado: bool) -> InlineKeyboardMarkup:
+    """Botão único preso à mensagem de um concurso, no estado atual dele.
 
-def teclado_favoritar(concursos: Sequence[dict], ids: Sequence) -> InlineKeyboardMarkup:
-    """Um botão ⭐ por concurso presente na mensagem."""
-    por_id = {c.get("id"): c for c in concursos}
-    linhas = []
-    for cid in ids:
-        titulo = (por_id.get(cid, {}).get("titulo") or "concurso")[:28]
-        linhas.append([InlineKeyboardButton(f"⭐ {titulo}", callback_data=f"fav_{cid}")])
-    return InlineKeyboardMarkup(linhas)
+    Uma mensagem por concurso resolve o que numerar só contornava: o teclado
+    do Telegram fica sempre no rodapé, então numa lista agrupada os botões
+    viravam um bloco solto no fim, longe do concurso a que se referiam.
+    """
+    if favoritado:
+        botao = InlineKeyboardButton(
+            "💔 Remover dos favoritos", callback_data=f"desfav_{concurso_id}"
+        )
+    else:
+        botao = InlineKeyboardButton(
+            "⭐ Favoritar", callback_data=f"fav_{concurso_id}"
+        )
+    return InlineKeyboardMarkup([[botao]])
 
 
 def agrupar_em_mensagens(
@@ -79,9 +81,9 @@ def agrupar_em_mensagens(
 ) -> Iterator[tuple[str, list]]:
     """Junta vários concursos por mensagem, respeitando o limite do Telegram.
 
-    Devolve `(texto, ids)` para que quem envia só marque como entregue o que
-    de fato saiu. Uma mensagem por concurso estoura o limite de ~1 msg/s por
-    chat: uma lista com 80 resultados viraria mais de um minuto de flood.
+    Devolve `(texto, ids)` para quem envia marcar como entregue só o que de
+    fato saiu. Usado onde a lista pode ser longa e não há botão por item —
+    uma mensagem por concurso ali estouraria o limite de ~1 msg/s por chat.
     """
     atual: list[str] = []
     ids: list = []

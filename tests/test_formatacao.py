@@ -1,9 +1,4 @@
-from bot.formatacao import (
-    LIMITE_MENSAGEM,
-    agrupar_em_mensagens,
-    formatar_concurso,
-    formatar_ufs,
-)
+from bot.formatacao import formatar_concurso, formatar_ufs
 
 
 def _concurso(**extra):
@@ -41,30 +36,7 @@ def test_sem_link_nao_deixa_linha_solta():
     assert "🔗" not in formatar_concurso(_concurso(link=""))
 
 
-def test_agrupa_respeitando_o_limite_do_telegram():
-    concursos = [_concurso(id=i, titulo=f"Concurso {i}") for i in range(60)]
-    mensagens = list(agrupar_em_mensagens(concursos))
 
-    assert len(mensagens) > 1  # precisa quebrar, senão estoura a API
-    assert all(len(texto) <= LIMITE_MENSAGEM + 200 for texto, _ in mensagens)
-
-
-def test_ids_acompanham_a_mensagem_em_que_saem():
-    """Quem envia só marca como entregue os ids da mensagem que deu certo."""
-    concursos = [_concurso(id=i, titulo=f"Concurso {i}") for i in range(60)]
-    mensagens = list(agrupar_em_mensagens(concursos))
-
-    ids_por_mensagem = [ids for _, ids in mensagens]
-    todos = [i for ids in ids_por_mensagem for i in ids]
-
-    assert todos == list(range(60))
-    for texto, ids in mensagens:
-        for i in ids:
-            assert f"Concurso {i}</b>" in texto
-
-
-def test_lista_vazia_nao_gera_mensagem():
-    assert list(agrupar_em_mensagens([])) == []
 
 
 def test_formatar_ufs_converte_slug_em_sigla():

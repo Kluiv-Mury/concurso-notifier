@@ -1,9 +1,10 @@
+import asyncio
 from datetime import date, timedelta
 
 import pytest
 
 import db
-from bot.formatacao import MAX_ITENS_COM_BOTAO, agrupar_em_mensagens, teclado_favoritar
+from bot.formatacao import teclado_favorito
 
 
 def _concurso(titulo, dias=30):
@@ -127,13 +128,34 @@ def test_descarta_duplicata_e_vazio(base):
 # Favoritos
 # --------------------------------------------------------------------------- #
 
-def test_favoritar_alterna(base):
+def test_adicionar_e_remover_favorito(base):
     cid = base.buscar_concursos(["bahia"])[0]["id"]
 
-    assert base.favoritar(1, cid) is True
+    base.adicionar_favorito(1, cid)
     assert len(base.listar_favoritos(1)) == 1
-    assert base.favoritar(1, cid) is False
+    base.remover_favorito(1, cid)
     assert base.listar_favoritos(1) == []
+
+
+def test_adicionar_duas_vezes_nao_estoura(base):
+    """O botão diz a ação, mas dois toques rápidos não podem quebrar nada."""
+    cid = base.buscar_concursos(["bahia"])[0]["id"]
+
+    base.adicionar_favorito(1, cid)
+    base.adicionar_favorito(1, cid)
+    base.remover_favorito(1, cid)
+    base.remover_favorito(1, cid)
+
+    assert base.listar_favoritos(1) == []
+
+
+def test_ids_favoritos(base):
+    """O botão precisa nascer no estado certo, sem consultar um por um."""
+    ids = [c["id"] for c in base.buscar_concursos(["bahia"])]
+    base.adicionar_favorito(1, ids[0])
+
+    assert base.ids_favoritos(1) == {ids[0]}
+    assert base.ids_favoritos(2) == set()
 
 
 def test_favoritos_encerrados_ficam_de_fora(base):
@@ -142,7 +164,7 @@ def test_favoritos_encerrados_ficam_de_fora(base):
         cid = conn.execute(
             "SELECT id FROM concursos WHERE titulo = 'Já encerrou'"
         ).fetchone()["id"]
-    base.favoritar(1, cid)
+    base.adicionar_favorito(1, cid)
 
     assert base.listar_favoritos(1) == []
     assert len(base.listar_favoritos(1, incluir_encerrados=True)) == 1
@@ -155,7 +177,7 @@ def test_favoritos_ordenados_por_urgencia(base):
     ])
     for c in base.buscar_concursos(["bahia"]):
         if c["titulo"] in ("Fecha depois", "Fecha logo"):
-            base.favoritar(1, c["id"])
+            base.adicionar_favorito(1, c["id"])
 
     assert [c["titulo"] for c in base.listar_favoritos(1)] == ["Fecha logo", "Fecha depois"]
 
@@ -163,7 +185,7 @@ def test_favoritos_ordenados_por_urgencia(base):
 def test_favorito_de_um_nao_vaza_para_outro(base):
     base.adicionar_usuario(2, "Outro")
     cid = base.buscar_concursos(["bahia"])[0]["id"]
-    base.favoritar(1, cid)
+    base.adicionar_favorito(1, cid)
 
     assert len(base.listar_favoritos(1)) == 1
     assert base.listar_favoritos(2) == []
@@ -171,7 +193,7 @@ def test_favorito_de_um_nao_vaza_para_outro(base):
 
 def test_remover_usuario_leva_favoritos_e_palavras(base):
     cid = base.buscar_concursos(["bahia"])[0]["id"]
-    base.favoritar(1, cid)
+    base.adicionar_favorito(1, cid)
     base.atualizar_palavras_usuario(1, ["medico"])
 
     base.remover_usuario(1)
@@ -184,27 +206,79 @@ def test_remover_usuario_leva_favoritos_e_palavras(base):
 # Teclado
 # --------------------------------------------------------------------------- #
 
-def test_um_botao_por_concurso_da_mensagem():
-    concursos = [{"id": i, "titulo": f"Concurso {i}"} for i in range(3)]
-    teclado = teclado_favoritar(concursos, [0, 1, 2])
+def test_botao_unico_preso_ao_concurso():
+    """Uma mensagem por concurso: o teclado tem um botão e é daquele concurso."""
+    teclado = teclado_favorito(42, favoritado=False)
 
-    assert len(teclado.inline_keyboard) == 3
-    assert teclado.inline_keyboard[0][0].callback_data == "fav_0"
-
-
-def test_botao_nao_estoura_o_limite_de_callback_data():
-    """callback_data tem teto de 64 bytes na API."""
-    concursos = [{"id": 999999, "titulo": "T" * 200}]
-    botao = teclado_favoritar(concursos, [999999]).inline_keyboard[0][0]
-
-    assert len(botao.callback_data.encode()) <= 64
-    assert len(botao.text) < 40
+    assert len(teclado.inline_keyboard) == 1
+    assert len(teclado.inline_keyboard[0]) == 1
+    assert teclado.inline_keyboard[0][0].callback_data == "fav_42"
 
 
-def test_max_itens_limita_a_parede_de_botoes():
-    concursos = [{"id": i, "titulo": f"C{i}", "inscricoes_ate": "01/01/2030"}
-                 for i in range(12)]
-    grupos = list(agrupar_em_mensagens(concursos, max_itens=MAX_ITENS_COM_BOTAO))
+def test_botao_mostra_remover_quando_ja_e_favorito():
+    botao = teclado_favorito(42, favoritado=True).inline_keyboard[0][0]
 
-    assert all(len(ids) <= MAX_ITENS_COM_BOTAO for _, ids in grupos)
-    assert sum(len(ids) for _, ids in grupos) == 12
+    assert botao.callback_data == "desfav_42"
+    assert "Remover" in botao.text
+
+
+def test_acao_vai_explicita_no_callback():
+    """Sem alternar às cegas: o dado diz o que fazer, não o estado no banco."""
+    assert teclado_favorito(7, False).inline_keyboard[0][0].callback_data == "fav_7"
+    assert teclado_favorito(7, True).inline_keyboard[0][0].callback_data == "desfav_7"
+
+
+def test_callback_data_dentro_do_limite_da_api():
+    """callback_data tem teto de 64 bytes."""
+    for favoritado in (True, False):
+        botao = teclado_favorito(999999999, favoritado).inline_keyboard[0][0]
+        assert len(botao.callback_data.encode()) <= 64
+
+
+class _MensagemFalsa:
+    """Captura o que seria enviado, sem falar com o Telegram."""
+
+    def __init__(self):
+        self.enviadas = []
+
+    async def reply_text(self, texto, **kwargs):
+        self.enviadas.append((texto, kwargs))
+
+
+async def _coletar(base, concursos):
+    from bot.handlers import _enviar_um_a_um
+
+    falsa = _MensagemFalsa()
+    await _enviar_um_a_um(falsa, 1, concursos)
+    return falsa.enviadas
+
+
+def test_uma_mensagem_por_concurso_com_botao_proprio(base):
+    """Cada concurso na sua mensagem: é o que prende o ⭐ ao concurso certo."""
+    concursos = base.buscar_concursos(["bahia"])
+    enviadas = asyncio.run(_coletar(base, concursos))
+
+    assert len(enviadas) == len(concursos)
+    for (texto, kwargs), concurso in zip(enviadas, concursos):
+        botao = kwargs["reply_markup"].inline_keyboard[0][0]
+        assert botao.callback_data == f"fav_{concurso['id']}"
+        assert concurso["titulo"][:20] in texto
+
+
+def test_preview_fica_ligado(base):
+    """Com um concurso por mensagem o cartão agrega: a origem publica imagem
+    e descrição próprias por edital."""
+    enviadas = asyncio.run(_coletar(base, base.buscar_concursos(["bahia"])))
+
+    assert all("link_preview_options" not in kwargs for _, kwargs in enviadas)
+
+
+def test_botao_nasce_como_remover_se_ja_e_favorito(base):
+    concursos = base.buscar_concursos(["bahia"])
+    base.adicionar_favorito(1, concursos[0]["id"])
+
+    enviadas = asyncio.run(_coletar(base, concursos))
+    primeiro = enviadas[0][1]["reply_markup"].inline_keyboard[0][0]
+
+    assert primeiro.callback_data == f"desfav_{concursos[0]['id']}"
+

@@ -179,3 +179,15 @@ def test_coluna_de_lembrete_existe(banco):
     with banco.conectar() as conn:
         versao = conn.execute("SELECT versao FROM schema_version").fetchone()[0]
     assert versao == banco.SCHEMA_VERSION
+
+
+def test_lembrete_traz_a_data_normalizada(banco):
+    """Regressão: sem `inscricoes_ate_iso` na query, `dias_restantes` recebia
+    None e a mensagem caía no ramo genérico — o "faltam N dias" que é o ponto
+    inteiro do lembrete nunca aparecia, sem erro nenhum."""
+    _com_historico(banco, dias=2)
+    concurso = banco.buscar_encerrando(1, DIAS_PARA_LEMBRAR)[0]
+
+    assert concurso["inscricoes_ate_iso"] is not None
+    assert banco.dias_restantes(concurso["inscricoes_ate_iso"]) == 2
+    assert "faltam 2 dias" in formatar_lembrete(concurso, 2)

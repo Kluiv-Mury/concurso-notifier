@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
 from bot.formatacao import (
-    MAX_ITENS_COM_BOTAO,
-    agrupar_em_mensagens,
+    formatar_concurso,
     formatar_ufs,
-    teclado_favoritar,
+    teclado_favorito,
 )
 from config import SIGLAS_ESTADOS, logger
 from db import (
@@ -19,8 +19,10 @@ from db import (
     atualizar_uf_usuario,
     atualizar_palavras_usuario,
     buscar_concursos,
-    favoritar,
+    adicionar_favorito,
+    ids_favoritos,
     listar_favoritos,
+    remover_favorito,
     marcar_enviados,
     normalizar,
     obter_palavras_usuario,
@@ -33,6 +35,7 @@ from db import (
 
 # Pausa entre mensagens de uma listagem longa (~1 msg/s por chat na API).
 PAUSA_ENTRE_MENSAGENS = 0.6
+
 
 
 async def _garantir_usuario(update: Update) -> int:
@@ -143,6 +146,64 @@ async def uf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Usuário %s atualizou estados: %s", user_id, slugs)
 
 
+async def _enviar_um_a_um(mensagem, user_id: int, concursos: list[dict]) -> list[int]:
+    """Uma mensagem por concurso, cada uma com seu próprio botão de favorito.
+
+    Devolve os ids que realmente saíram.
+    """
+    favoritos = await asyncio.to_thread(ids_favoritos, user_id)
+    enviados: list[int] = []
+
+    for concurso in concursos:
+        cid = concurso.get("id")
+        try:
+            # Preview ligado de propósito: com um concurso só na mensagem, o
+            # cartão traz imagem e descrição próprias do edital.
+            await mensagem.reply_text(
+                formatar_concurso(concurso),
+                parse_mode="HTML",
+                reply_markup=teclado_favorito(cid, cid in favoritos),
+            )
+        except RetryAfter as erro:
+            # Lista longa passa do ~1 msg/s por chat. Esperar o que a API
+            # pediu e reenviar é melhor que perder o concurso em silêncio.
+            logger.warning("Flood control em %s: aguardando %ss.", user_id, erro.retry_after)
+            await asyncio.sleep(erro.retry_after + 1)
+            await mensagem.reply_text(
+                formatar_concurso(concurso),
+                parse_mode="HTML",
+                reply_markup=teclado_favorito(cid, cid in favoritos),
+            )
+        except TelegramError:
+            logger.exception("Erro ao enviar concurso %s para %s.", cid, user_id)
+            break
+
+        enviados.append(cid)
+        await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
+
+    return enviados
+
+
+async def _concursos_do_usuario(user_id: int, apenas_novos: bool) -> list[dict]:
+    """Busca com os estados, filtros e palavras que o usuário configurou."""
+    ufs = await asyncio.to_thread(obter_ufs_usuario, user_id)
+    if not ufs:
+        return []
+
+    salario, nivel, vagas = await asyncio.to_thread(obter_filtros, user_id)
+    palavras = await asyncio.to_thread(obter_palavras_usuario, user_id)
+    return await asyncio.to_thread(
+        buscar_concursos,
+        ufs,
+        salario,
+        nivel,
+        vagas,
+        user_id if apenas_novos else None,
+        None,
+        palavras,
+    )
+
+
 async def _listar(update: Update, apenas_novos: bool) -> None:
     """Base de /concursos (só novidades) e /todos (tudo que está aberto)."""
     user_id = await _garantir_usuario(update)
@@ -157,18 +218,7 @@ async def _listar(update: Update, apenas_novos: bool) -> None:
         )
         return
 
-    salario, nivel, vagas = await asyncio.to_thread(obter_filtros, user_id)
-    palavras = await asyncio.to_thread(obter_palavras_usuario, user_id)
-    concursos = await asyncio.to_thread(
-        buscar_concursos,
-        ufs,
-        salario,
-        nivel,
-        vagas,
-        user_id if apenas_novos else None,
-        None,
-        palavras,
-    )
+    concursos = await _concursos_do_usuario(user_id, apenas_novos)
 
     if not concursos:
         if apenas_novos:
@@ -187,18 +237,10 @@ async def _listar(update: Update, apenas_novos: bool) -> None:
         parse_mode="HTML",
     )
 
-    enviados: list[int] = []
-    grupos = agrupar_em_mensagens(
-        concursos,
-        compacto=not apenas_novos,
-        # Botão só nas novidades: /todos é um despejo e viraria parede de botões.
-        max_itens=MAX_ITENS_COM_BOTAO if apenas_novos else None,
-    )
-    for texto, ids in grupos:
-        teclado = teclado_favoritar(concursos, ids) if apenas_novos else None
-        await mensagem.reply_text(texto, parse_mode="HTML", reply_markup=teclado)
-        enviados.extend(ids)
-        await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
+    # Uma mensagem por concurso em toda listagem: é o que prende o ⭐ ao
+    # concurso certo. O teclado do Telegram fica sempre no rodapé, então
+    # numa mensagem com vários ele não teria como apontar para um deles.
+    enviados = await _enviar_um_a_um(mensagem, user_id, concursos)
 
     if apenas_novos and enviados:
         # Marca depois do envio: se falhar no meio, o restante volta na
@@ -293,30 +335,41 @@ async def favoritos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="HTML",
     )
 
-    for texto, ids in agrupar_em_mensagens(lista, compacto=False, max_itens=5):
-        await mensagem.reply_text(
-            texto, parse_mode="HTML", reply_markup=teclado_favoritar(lista, ids)
-        )
-        await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
+    # Todos já são favoritos, então cada um nasce com o botão de remover.
+    await _enviar_um_a_um(mensagem, user_id, lista)
 
 
 async def callback_favoritar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
+    dado = query.data or ""
+
+    # Ação explícita no callback, em vez de alternar às cegas: o botão já
+    # mostra o estado, e dois toques rápidos não se atrapalham.
+    remover = dado.startswith("desfav_")
+    prefixo = "desfav_" if remover else "fav_"
 
     try:
-        concurso_id = int(query.data.removeprefix("fav_"))
+        concurso_id = int(dado.removeprefix(prefixo))
     except ValueError:
         await query.answer("Não consegui identificar esse concurso.")
         return
 
-    virou_favorito = await asyncio.to_thread(favoritar, user_id, concurso_id)
-    # A resposta do callback é o retorno visual: a mensagem não muda.
-    await query.answer(
-        "⭐ Adicionado aos favoritos. Veja em /favoritos"
-        if virou_favorito
-        else "Removido dos favoritos."
-    )
+    if remover:
+        await asyncio.to_thread(remover_favorito, user_id, concurso_id)
+        await query.answer("Removido dos favoritos.")
+    else:
+        await asyncio.to_thread(adicionar_favorito, user_id, concurso_id)
+        await query.answer("⭐ Adicionado. Veja em /favoritos")
+
+    # Vira o botão para refletir o novo estado, sem reescrever o texto.
+    try:
+        await query.edit_message_reply_markup(
+            reply_markup=teclado_favorito(concurso_id, favoritado=not remover)
+        )
+    except BadRequest as erro:
+        if "not modified" not in str(erro).lower():
+            raise
 
 
 # --------------------------------------------------------------------------- #

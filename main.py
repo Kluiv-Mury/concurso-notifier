@@ -103,7 +103,7 @@ def main() -> None:
     # O `pattern` precisa vir antes: dentro de um mesmo grupo só o primeiro
     # handler compatível roda, e `callback_config` aceita qualquer callback.
     application.add_handler(CallbackQueryHandler(callback_deletar, pattern=r"^del_"))
-    application.add_handler(CallbackQueryHandler(callback_favoritar, pattern=r"^fav_"))
+    application.add_handler(CallbackQueryHandler(callback_favoritar, pattern=r"^(des)?fav_"))
     application.add_handler(CallbackQueryHandler(callback_config))
     application.add_error_handler(tratar_erro)
 

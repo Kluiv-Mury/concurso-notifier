@@ -921,26 +921,30 @@ def obter_palavras_usuario(user_id: int) -> list[str]:
     return [linha["palavra"] for linha in linhas]
 
 
-def favoritar(user_id: int, concurso_id: int) -> bool:
-    """Alterna o favorito. True se passou a estar favoritado, False se saiu."""
+def adicionar_favorito(user_id: int, concurso_id: int) -> None:
+    """Idempotente: o botão diz qual ação tomar, então não alterna às cegas."""
     with conectar() as conn:
-        ja = conn.execute(
-            "SELECT 1 FROM user_favoritos WHERE user_id = ? AND concurso_id = ?",
-            (user_id, concurso_id),
-        ).fetchone()
-
-        if ja:
-            conn.execute(
-                "DELETE FROM user_favoritos WHERE user_id = ? AND concurso_id = ?",
-                (user_id, concurso_id),
-            )
-            return False
-
         conn.execute(
-            "INSERT INTO user_favoritos (user_id, concurso_id) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO user_favoritos (user_id, concurso_id) VALUES (?, ?)",
             (user_id, concurso_id),
         )
-        return True
+
+
+def remover_favorito(user_id: int, concurso_id: int) -> None:
+    with conectar() as conn:
+        conn.execute(
+            "DELETE FROM user_favoritos WHERE user_id = ? AND concurso_id = ?",
+            (user_id, concurso_id),
+        )
+
+
+def ids_favoritos(user_id: int) -> set[int]:
+    """Quais concursos o usuário favoritou — para o botão nascer no estado certo."""
+    with conectar() as conn:
+        linhas = conn.execute(
+            "SELECT concurso_id FROM user_favoritos WHERE user_id = ?", (user_id,)
+        ).fetchall()
+    return {linha["concurso_id"] for linha in linhas}
 
 
 def listar_favoritos(user_id: int, incluir_encerrados: bool = False) -> list[dict]:
@@ -980,7 +984,7 @@ def buscar_encerrando(user_id: int, dias: int) -> list[dict]:
         linhas = conn.execute(
             f"""
             SELECT c.id, c.titulo, c.link, c.inscricoes_ate, c.vagas,
-                   c.salario_max, c.nivel, c.estado
+                   c.salario_max, c.nivel, c.estado, c.inscricoes_ate_iso
               FROM user_concursos_enviados e
               JOIN concursos c ON c.id = e.concurso_id
              WHERE e.user_id = ?

@@ -10,7 +10,7 @@ from typing import Optional
 from telegram.error import Forbidden, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
-from bot.formatacao import agrupar_em_mensagens, formatar_lembrete
+from bot.formatacao import formatar_concurso, formatar_lembrete, teclado_favorito
 from config import ADMIN_CHAT_ID, SLUGS_COLETA, logger
 from db import (
     atualizar_notificacoes_usuario,
@@ -18,6 +18,7 @@ from db import (
     buscar_encerrando,
     dias_restantes,
     fazer_backup,
+    ids_favoritos,
     listar_usuarios,
     marcar_enviados,
     marcar_lembretes,
@@ -186,12 +187,17 @@ async def atualizar_base_concursos(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _enviar(
-    context: ContextTypes.DEFAULT_TYPE, user_id: int, texto: str
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    texto: str,
+    reply_markup=None,
 ) -> bool:
     """Envia tratando flood control. False quando não deu para entregar."""
     for _ in range(2):
         try:
-            await context.bot.send_message(user_id, texto, parse_mode="HTML")
+            await context.bot.send_message(
+                user_id, texto, parse_mode="HTML", reply_markup=reply_markup
+            )
             return True
         except RetryAfter as erro:
             logger.warning("Flood control para %s: aguardando %ss.", user_id, erro.retry_after)
@@ -229,14 +235,25 @@ async def _notificar_usuario(
     if not concursos:
         return 0
 
+    # Uma mensagem por concurso, para o ⭐ ficar preso ao concurso certo — o
+    # teclado do Telegram fica sempre no rodapé e não aponta para um item
+    # dentro de uma mensagem com vários.
+    favoritos = await asyncio.to_thread(ids_favoritos, user_id)
     enviados: list[int] = []
 
-    for texto, ids in agrupar_em_mensagens(concursos, compacto=True):
-        if not await _enviar(context, user_id, texto):
+    for concurso in concursos:
+        cid = concurso["id"]
+        entregue = await _enviar(
+            context,
+            user_id,
+            formatar_concurso(concurso),
+            teclado_favorito(cid, cid in favoritos),
+        )
+        if not entregue:
             # Só é marcado como enviado o que realmente saiu; o resto volta no
             # próximo ciclo em vez de se perder para sempre.
             break
-        enviados.extend(ids)
+        enviados.append(cid)
         await asyncio.sleep(PAUSA_ENTRE_MENSAGENS)
 
     if enviados:
